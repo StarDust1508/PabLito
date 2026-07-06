@@ -33,6 +33,14 @@
         {
           "microphonePermission": "PabLito necesita el micrófono para escucharte hablar en español."
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "kotlinVersion": "1.9.25"
+          }
+        }
       ]
     ],
     "extra": {
