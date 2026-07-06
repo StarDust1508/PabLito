@@ -146,8 +146,10 @@ export function usePablito() {
   const runAssistant = useCallback(
     async (deep?: boolean, isGreeting = false) => {
       const asstId = uid();
-      setMessages((prev) => [...prev, { id: asstId, role: 'assistant', text: '' }]);
       setBusy(true);
+      // P1-7: живая пауза «печатает…» перед ответом (1–3 c) — по-человечески, не мгновенно.
+      await new Promise<void>((r) => setTimeout(r, 1000 + Math.floor(Math.random() * 2000)));
+      setMessages((prev) => [...prev, { id: asstId, role: 'assistant', text: '' }]);
       const patch = (text: string) =>
         setMessages((prev) => prev.map((mm) => (mm.id === asstId ? { ...mm, text } : mm)));
 
@@ -330,8 +332,25 @@ export function usePablito() {
       setLessonModeState(next);
       await mem.setLessonMode(next, todayKey());
       await rebuildSystem(moodRef.current);
+
+      // P0-4: заметная реакция на смену режима — Паблито сам пишет короткую реплику.
+      // Служебный ввод идёт только в контекст модели: не показываем и не сохраняем как сообщение пользователя.
+      if (!ready || busy || sending.current) return; // не перебиваем и не мешаем стартовому приветствию
+      sending.current = true;
+      try {
+        history.current.push({
+          role: 'user',
+          content:
+            next === 'lesson'
+              ? '(El alumno cambió a modo LECCIÓN. Reaccioná vos, sin que él haya escrito nada: proponé el tema de hoy y un primer mini-ejercicio corto para arrancar ya.)'
+              : '(El alumno cambió a modo CHARLA de amigos. Reaccioná vos con una sola línea relajada, invitándolo a charlar de lo que quiera.)',
+        });
+        await runAssistant(undefined, true);
+      } finally {
+        sending.current = false;
+      }
     },
-    [rebuildSystem]
+    [ready, busy, rebuildSystem, runAssistant]
   );
 
   return {

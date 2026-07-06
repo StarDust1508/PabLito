@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -27,6 +28,22 @@ import { countdownLabel } from '@/core/progress';
 import { requestMic, startRecording, stopRecording } from '@/core/voice';
 import { transcribe } from '@/api/navy';
 
+type Presence = 'online' | 'typing' | 'recent' | 'offline';
+const rand = (min: number, max: number) => min + Math.floor(Math.random() * (max - min));
+const PRESENCE_ONLINE = '#3E9B6B'; // спокойный зелёный «в сети», в тон бумажной палитре
+
+function presenceLabel(p: Presence): string {
+  if (p === 'typing') return 'печатает…';
+  if (p === 'online') return 'в сети';
+  if (p === 'recent') return 'был недавно';
+  return 'не в сети';
+}
+function presenceColor(p: Presence, c: typeof light): string {
+  if (p === 'online') return PRESENCE_ONLINE;
+  if (p === 'typing') return c.accent;
+  return c.textMuted;
+}
+
 export default function ChatScreen() {
   const scheme = useColorScheme();
   const c = scheme === 'dark' ? dark : light;
@@ -40,12 +57,71 @@ export default function ChatScreen() {
   const countdown = countdownLabel(daysToMove);
   const listRef = useRef<FlatList<UiMessage>>(null);
 
+  // P1-6: присутствие «в сети / печатает / был недавно». Чистая UI-симуляция, LLM не трогаем.
+  const [presence, setPresence] = useState<Presence>('online');
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const enterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const busyEffectRan = useRef(false);
+
   // Скроллим и при новом сообщении, и по мере роста текста во время стриминга.
   const lastLen = messages[messages.length - 1]?.text.length ?? 0;
   useEffect(() => {
     const t = setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
     return () => clearTimeout(t);
   }, [messages.length, lastLen]);
+
+  // P1-6: «печатает» ведёт busy; после ответа «в сети», через 20–40 c простоя «был недавно».
+  useEffect(() => {
+    if (!busyEffectRan.current) {
+      busyEffectRan.current = true;
+      if (!busy) return; // начальный статус ставит entry-эффект ниже
+    }
+    if (enterTimer.current) {
+      clearTimeout(enterTimer.current);
+      enterTimer.current = null;
+    }
+    if (busy) {
+      if (idleTimer.current) {
+        clearTimeout(idleTimer.current);
+        idleTimer.current = null;
+      }
+      setPresence('typing');
+    } else {
+      setPresence('online');
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+      idleTimer.current = setTimeout(() => setPresence('recent'), rand(20000, 40000));
+    }
+  }, [busy]);
+
+  // P1-6: вход/возврат в чат — иногда «был недавно / не в сети», затем через 1–3 c оживает в «в сети».
+  useEffect(() => {
+    const enter = () => {
+      if (busyRef.current) return; // печатает — статусом управляет busy-эффект
+      if (idleTimer.current) {
+        clearTimeout(idleTimer.current);
+        idleTimer.current = null;
+      }
+      if (enterTimer.current) clearTimeout(enterTimer.current);
+      if (Math.random() < 0.4) {
+        setPresence(Math.random() < 0.5 ? 'recent' : 'offline');
+        enterTimer.current = setTimeout(() => setPresence('online'), rand(1000, 3000));
+      } else {
+        setPresence('online');
+      }
+    };
+    enter();
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') enter();
+    });
+    return () => {
+      sub.remove();
+      if (enterTimer.current) clearTimeout(enterTimer.current);
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onSend = () => {
     if (!text.trim()) return;
@@ -86,6 +162,10 @@ export default function ChatScreen() {
           <View>
             <Text style={[styles.brand, { color: c.text }]}>PabLito<Text style={{ color: c.accent }}>_</Text></Text>
             <Text style={[styles.mono, { color: c.textMuted }]}>ES-AR · TU AMIGO PORTEÑO</Text>
+            <View style={styles.presenceRow}>
+              <View style={[styles.presenceDot, { backgroundColor: presenceColor(presence, c) }]} />
+              <Text style={[styles.presenceText, { color: c.textMuted }]}>{presenceLabel(presence)}</Text>
+            </View>
           </View>
         </View>
         <View style={{ alignItems: 'flex-end', gap: 6 }}>
@@ -127,29 +207,28 @@ export default function ChatScreen() {
             ) : null}
           </View>
           <View style={styles.controlSide}>
-            <View style={[styles.toggle, { borderColor: c.line }]}>
-              <Pressable
-                onPress={() => setLessonMode('chat')}
-                style={[styles.tgBtn, { backgroundColor: lessonMode === 'chat' ? c.accent : 'transparent' }]}
-              >
-                <Text style={{ color: lessonMode === 'chat' ? c.accentText : c.text, fontSize: 12, fontWeight: '600' }}>
-                  Болталка
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setLessonMode('lesson')}
-                style={[styles.tgBtn, { backgroundColor: lessonMode === 'lesson' ? c.accent : 'transparent' }]}
-              >
-                <Text style={{ color: lessonMode === 'lesson' ? c.accentText : c.text, fontSize: 12, fontWeight: '600' }}>
-                  Урок
-                </Text>
-              </Pressable>
-            </View>
             <Pressable onPress={() => setWordsOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
               <Text style={{ fontSize: 15 }}>📖</Text>
             </Pressable>
             <Pressable onPress={() => setMemOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
               <Text style={{ fontSize: 15 }}>🧠</Text>
+            </Pressable>
+          </View>
+        </View>
+        <View style={[styles.modeBar, { borderBottomColor: c.line }]}>
+          <Text style={[styles.mono, { color: c.textMuted }]}>РЕЖИМ</Text>
+          <View style={[styles.toggle, { borderColor: c.line, flex: 1 }]}>
+            <Pressable
+              onPress={() => setLessonMode('chat')}
+              style={[styles.tgBtn, styles.tgHalf, { backgroundColor: lessonMode === 'chat' ? c.accent : 'transparent' }]}
+            >
+              <Text style={[styles.tgText, { color: lessonMode === 'chat' ? c.accentText : c.text }]}>💬 Друг</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setLessonMode('lesson')}
+              style={[styles.tgBtn, styles.tgHalf, { backgroundColor: lessonMode === 'lesson' ? c.accent : 'transparent' }]}
+            >
+              <Text style={[styles.tgText, { color: lessonMode === 'lesson' ? c.accentText : c.text }]}>📚 Урок</Text>
             </Pressable>
           </View>
         </View>
@@ -254,6 +333,9 @@ const styles = StyleSheet.create({
   avatar: { width: 40, height: 40, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth },
   brand: { fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
   mono: { fontFamily: 'monospace', fontSize: 10, letterSpacing: 1, textTransform: 'uppercase' },
+  presenceRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
+  presenceDot: { width: 7, height: 7, borderRadius: 4 },
+  presenceText: { fontSize: 11, fontWeight: '600' },
   practice: {
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 16,
@@ -278,8 +360,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   pillText: { fontSize: 12, fontWeight: '700' },
+  modeBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space(1.25),
+    paddingHorizontal: space(2),
+    paddingVertical: space(0.75),
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
   toggle: { flexDirection: 'row', borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, overflow: 'hidden' },
-  tgBtn: { paddingVertical: 6, paddingHorizontal: 10 },
+  tgBtn: { paddingVertical: 9, paddingHorizontal: 14 },
+  tgHalf: { flex: 1, alignItems: 'center' },
+  tgText: { fontSize: 14, fontWeight: '700' },
   iconBtn: {
     width: 34,
     height: 34,
