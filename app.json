@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "PabLito",
+    "slug": "pablito",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "pablito",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": false,
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#EDEAE3"
+    },
+    "ios": {
+      "bundleIdentifier": "com.stardust.pablito",
+      "supportsTablet": false
+    },
+    "android": {
+      "package": "com.stardust.pablito",
+      "permissions": ["RECORD_AUDIO"],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#EDEAE3"
+      }
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-sqlite",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "PabLito necesita el micrófono para escucharte hablar en español."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": ""
+      }
+    }
+  }
+}

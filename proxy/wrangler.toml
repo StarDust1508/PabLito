@@ -1,0 +1,7 @@
+name = "pablito-proxy"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Секреты НЕ хранятся здесь. Задай их командами:
+#   npx wrangler secret put NAVY_API_KEY
+#   npx wrangler secret put CLIENT_TOKEN   # необязательно

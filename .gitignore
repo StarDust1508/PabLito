@@ -1,0 +1,21 @@
+# deps
+node_modules/
+
+# expo
+.expo/
+dist/
+web-build/
+*.orig.*
+
+# secrets — НИКОГДА не коммитить ключи
+.env
+.env.local
+*.keystore
+
+# native
+android/
+ios/
+
+# os / editor
+.DS_Store
+*.log

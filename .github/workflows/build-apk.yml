@@ -1,0 +1,73 @@
+name: Build Android APK
+
+# Запуск: вручную кнопкой (Actions → Build Android APK → Run workflow)
+# или автоматически при пуше тега вида v1, v1.0 и т.п.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # нужно, чтобы приложить APK к Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Create .env (ключ берётся из секрета репозитория NAVY_API_KEY)
+        run: |
+          {
+            echo "EXPO_PUBLIC_NAVY_BASE_URL=https://api.navy/v1"
+            echo "EXPO_PUBLIC_NAVY_API_KEY=${{ secrets.NAVY_API_KEY }}"
+            echo "EXPO_PUBLIC_MODEL_CHAT=deepseek-v4-flash"
+            echo "EXPO_PUBLIC_MODEL_DEEP=deepseek-v4-pro"
+            echo "EXPO_PUBLIC_MODEL_STT=whisper-1"
+          } > .env
+
+      - name: Prebuild (генерируем нативный android-проект)
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Build release APK
+        run: |
+          cd android
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Prepare artifact
+        run: cp android/app/build/outputs/apk/release/app-release.apk pablito.apk
+
+      - name: Upload as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pablito-apk
+          path: pablito.apk
+
+      - name: Publish to Releases (тег latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: PabLito — последний APK
+          files: pablito.apk
