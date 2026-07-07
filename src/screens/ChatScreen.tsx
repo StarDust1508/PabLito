@@ -26,7 +26,7 @@ import LearnedWordsModal from '@/screens/LearnedWordsModal';
 import MemoryModal from '@/screens/MemoryModal';
 import { countdownLabel } from '@/core/progress';
 import { requestMic, startRecording, stopRecording } from '@/core/voice';
-import { transcribe } from '@/api/navy';
+import { transcribe, translate } from '@/api/navy';
 
 type Presence = 'online' | 'typing' | 'recent' | 'offline';
 const rand = (min: number, max: number) => min + Math.floor(Math.random() * (max - min));
@@ -54,6 +54,7 @@ export default function ChatScreen() {
   const [pronOpen, setPronOpen] = useState(false);
   const [wordsOpen, setWordsOpen] = useState(false);
   const [memOpen, setMemOpen] = useState(false);
+  const [focused, setFocused] = useState(false); // при письме прячем верхнюю зону — больше места ленте
   const countdown = countdownLabel(daysToMove);
   const listRef = useRef<FlatList<UiMessage>>(null);
 
@@ -195,44 +196,48 @@ export default function ChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={8}
       >
-        <View style={[styles.controlBar, { borderBottomColor: c.line }]}>
-          <View style={styles.controlSide}>
-            <View style={[styles.pill, { borderColor: c.line }]}>
-              <Text style={[styles.pillText, { color: c.text }]}>🔥 {streak}</Text>
-            </View>
-            {countdown ? (
-              <View style={[styles.pill, { borderColor: c.line }]}>
-                <Text style={[styles.pillText, { color: c.text }]}>{countdown}</Text>
+        {!focused && (
+          <>
+            <View style={[styles.controlBar, { borderBottomColor: c.line }]}>
+              <View style={styles.controlSide}>
+                <View style={[styles.pill, { borderColor: c.line }]}>
+                  <Text style={[styles.pillText, { color: c.text }]}>🔥 {streak}</Text>
+                </View>
+                {countdown ? (
+                  <View style={[styles.pill, { borderColor: c.line }]}>
+                    <Text style={[styles.pillText, { color: c.text }]}>{countdown}</Text>
+                  </View>
+                ) : null}
               </View>
-            ) : null}
-          </View>
-          <View style={styles.controlSide}>
-            <Pressable onPress={() => setWordsOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
-              <Text style={{ fontSize: 15 }}>📖</Text>
-            </Pressable>
-            <Pressable onPress={() => setMemOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
-              <Text style={{ fontSize: 15 }}>🧠</Text>
-            </Pressable>
-          </View>
-        </View>
-        <View style={[styles.modeBar, { borderBottomColor: c.line }]}>
-          <Text style={[styles.mono, { color: c.textMuted }]}>РЕЖИМ</Text>
-          <View style={[styles.toggle, { borderColor: c.line, flex: 1 }]}>
-            <Pressable
-              onPress={() => setLessonMode('chat')}
-              style={[styles.tgBtn, styles.tgHalf, { backgroundColor: lessonMode === 'chat' ? c.accent : 'transparent' }]}
-            >
-              <Text style={[styles.tgText, { color: lessonMode === 'chat' ? c.accentText : c.text }]}>💬 Друг</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setLessonMode('lesson')}
-              style={[styles.tgBtn, styles.tgHalf, { backgroundColor: lessonMode === 'lesson' ? c.accent : 'transparent' }]}
-            >
-              <Text style={[styles.tgText, { color: lessonMode === 'lesson' ? c.accentText : c.text }]}>📚 Урок</Text>
-            </Pressable>
-          </View>
-        </View>
-        <CityStrip c={c} />
+              <View style={styles.controlSide}>
+                <Pressable onPress={() => setWordsOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
+                  <Text style={{ fontSize: 15 }}>📖</Text>
+                </Pressable>
+                <Pressable onPress={() => setMemOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
+                  <Text style={{ fontSize: 15 }}>🧠</Text>
+                </Pressable>
+              </View>
+            </View>
+            <View style={[styles.modeBar, { borderBottomColor: c.line }]}>
+              <Text style={[styles.mono, { color: c.textMuted }]}>РЕЖИМ</Text>
+              <View style={[styles.toggle, { borderColor: c.line, flex: 1 }]}>
+                <Pressable
+                  onPress={() => setLessonMode('chat')}
+                  style={[styles.tgBtn, styles.tgHalf, { backgroundColor: lessonMode === 'chat' ? c.accent : 'transparent' }]}
+                >
+                  <Text style={[styles.tgText, { color: lessonMode === 'chat' ? c.accentText : c.text }]}>💬 Друг</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setLessonMode('lesson')}
+                  style={[styles.tgBtn, styles.tgHalf, { backgroundColor: lessonMode === 'lesson' ? c.accent : 'transparent' }]}
+                >
+                  <Text style={[styles.tgText, { color: lessonMode === 'lesson' ? c.accentText : c.text }]}>📚 Урок</Text>
+                </Pressable>
+              </View>
+            </View>
+            <CityStrip c={c} />
+          </>
+        )}
         <FlatList
           ref={listRef}
           data={messages}
@@ -266,10 +271,13 @@ export default function ChatScreen() {
           <TextInput
             value={text}
             onChangeText={setText}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             placeholder={recording ? 'Hablá… te escucho' : 'Escribí o hablá en español…'}
             placeholderTextColor={c.textMuted}
             style={[styles.input, { color: c.text, borderColor: c.line }]}
             multiline
+            textAlignVertical="center"
             onSubmitEditing={onSend}
           />
           <Pressable
@@ -287,8 +295,35 @@ export default function ChatScreen() {
 
 function Bubble({ msg, c }: { msg: UiMessage; c: typeof light }) {
   const isUser = msg.role === 'user';
+  const [tr, setTr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [show, setShow] = useState(false);
+
+  // Тап по реплике Паблито → перевод на русский (повторный тап скрывает).
+  const onPress = async () => {
+    if (isUser || !msg.text) return;
+    if (tr) {
+      setShow((s) => !s);
+      return;
+    }
+    setLoading(true);
+    try {
+      const t = await translate(msg.text);
+      setTr(t);
+      setShow(true);
+    } catch {
+      /* нет сети — тихо игнорируем */
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <View style={{ alignItems: isUser ? 'flex-end' : 'flex-start' }}>
+    <Pressable
+      onPress={onPress}
+      disabled={isUser}
+      style={{ alignItems: isUser ? 'flex-end' : 'flex-start' }}
+    >
       <Text style={[styles.mono, { color: c.textMuted, marginBottom: 4 }]}>
         {isUser ? 'VOS' : 'PABLITO'}
       </Text>
@@ -303,17 +338,22 @@ function Bubble({ msg, c }: { msg: UiMessage; c: typeof light }) {
           },
         ]}
       >
-        <Text
-          style={{
-            color: isUser ? c.bubbleUserText : c.bubblePablitoText,
-            fontSize: 16,
-            lineHeight: 23,
-          }}
-        >
+        <Text style={{ color: isUser ? c.bubbleUserText : c.bubblePablitoText, fontSize: 16, lineHeight: 23 }}>
           {msg.text}
         </Text>
+        {loading ? (
+          <Text style={[styles.mono, { color: c.textMuted, marginTop: 6 }]}>перевожу…</Text>
+        ) : null}
+        {show && tr ? (
+          <View style={[styles.translation, { borderTopColor: c.line }]}>
+            <Text style={{ color: c.textMuted, fontSize: 14, lineHeight: 20 }}>{tr}</Text>
+          </View>
+        ) : null}
       </View>
-    </View>
+      {!isUser && !tr && !loading ? (
+        <Text style={[styles.tapHint, { color: c.textMuted }]}>нажми — перевод</Text>
+      ) : null}
+    </Pressable>
   );
 }
 
@@ -388,10 +428,13 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
   },
+  translation: { marginTop: 8, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth },
+  tapHint: { fontFamily: 'monospace', fontSize: 9, letterSpacing: 0.5, marginTop: 3, opacity: 0.6 },
   typing: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingVertical: space(1) },
+
   inputBar: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center', // кнопки по центру относительно поля ввода
     gap: space(1),
     paddingHorizontal: space(1.5),
     paddingTop: space(1),
@@ -413,7 +456,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 22,
     paddingHorizontal: space(2),
-    paddingTop: Platform.OS === 'ios' ? 12 : 8,
+    // симметричные вертикальные паддинги → текст ровно по центру острова
+    paddingVertical: Platform.OS === 'ios' ? 12 : 9,
     fontSize: 16,
   },
   send: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },

@@ -3,6 +3,9 @@ module.exports = function (api) {
   return {
     presets: ['babel-preset-expo'],
     // Алиас '@/...' -> './src/...' в рантайме Metro (tsconfig paths одного не хватает).
-    plugins: [['module-resolver', { root: ['./'], alias: { '@': './src' } }]],
+    plugins: [
+      ['module-resolver', { root: ['./'], alias: { '@': './src' } }],
+      'react-native-reanimated/plugin', // ← ВСЕГДА последним
+    ],
   };
 };

@@ -19,11 +19,14 @@
     },
     "android": {
       "package": "com.stardust.pablito",
-      "permissions": ["RECORD_AUDIO"],
+      "permissions": [
+        "RECORD_AUDIO"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#EDEAE3"
-      }
+      },
+      "softwareKeyboardLayoutMode": "pan"
     },
     "plugins": [
       "expo-secure-store",
@@ -40,6 +43,13 @@
           "android": {
             "kotlinVersion": "1.9.25"
           }
+        }
+      ],
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "PabLito quiere ver tu foto para charlar sobre ella en español."
         }
       ]
     ],

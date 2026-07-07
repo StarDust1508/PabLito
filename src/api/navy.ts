@@ -57,6 +57,17 @@ export async function chat(messages: ChatMessage[], opts: ChatOptions = {}): Pro
   return content.trim();
 }
 
+/** Перевод текста на русский (для «перевод по тапу»). Возвращает только перевод. */
+export async function translate(text: string): Promise<string> {
+  return chat(
+    [
+      { role: 'system', content: 'Traducí al ruso de forma natural. Devolvé SOLO la traducción, sin comillas ni notas.' },
+      { role: 'user', content: text },
+    ],
+    { temperature: 0.2 }
+  );
+}
+
 /**
  * Потоковый чат (SSE). Вызывает onDelta(полныйТекстНаТекущийМомент) по мере
  * прихода токенов и возвращает финальный текст. Использует expo/fetch, который
