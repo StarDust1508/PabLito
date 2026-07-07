@@ -1,8 +1,9 @@
 /**
- * Главный экран: чат с Паблито. Текст + голос. Индикатор настроения сверху.
- * Оформление — редакторский минимализм malvah: моно-лейблы, воздух, один акцент.
+ * Главный экран: чат с Паблито — ядро приложения.
+ * Острова (шапка/ввод), раскрытие на весь экран (кнопка + свайп), инвертированная
+ * лента, presence, перевод по тапу. Иконки — lucide. Эстетика malvah.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
@@ -18,6 +19,10 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { FadeInDown, FadeInUp, FadeOutUp, runOnJS } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
+import { BookOpen, Brain, Maximize2, Mic, Minimize2, Send, Sparkles, Square } from 'lucide-react-native';
 import { dark, light, space } from '@/theme/theme';
 import { usePablito, type UiMessage } from '@/hooks/usePablito';
 import CityStrip from '@/components/CityStrip';
@@ -54,11 +59,11 @@ export default function ChatScreen() {
   const [pronOpen, setPronOpen] = useState(false);
   const [wordsOpen, setWordsOpen] = useState(false);
   const [memOpen, setMemOpen] = useState(false);
-  const [focused, setFocused] = useState(false); // при письме прячем верхнюю зону — больше места ленте
+  const [focused, setFocused] = useState(false); // при письме прячем среднюю зону
+  const [expanded, setExpanded] = useState(false); // раскрытие чата на весь экран
   const countdown = countdownLabel(daysToMove);
-  const listRef = useRef<FlatList<UiMessage>>(null);
 
-  // P1-6: присутствие «в сети / печатает / был недавно». Чистая UI-симуляция, LLM не трогаем.
+  // P1-6: присутствие «в сети / печатает / был недавно». Чистая UI-симуляция.
   const [presence, setPresence] = useState<Presence>('online');
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -66,18 +71,14 @@ export default function ChatScreen() {
   const enterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const busyEffectRan = useRef(false);
 
-  // Скроллим и при новом сообщении, и по мере роста текста во время стриминга.
-  const lastLen = messages[messages.length - 1]?.text.length ?? 0;
-  useEffect(() => {
-    const t = setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
-    return () => clearTimeout(t);
-  }, [messages.length, lastLen]);
+  // §3.1: инвертированная лента — новейшее это индекс 0 (внизу), надёжно держит низ.
+  const data = useMemo(() => messages.slice().reverse(), [messages]);
 
-  // P1-6: «печатает» ведёт busy; после ответа «в сети», через 20–40 c простоя «был недавно».
+  // «печатает» ведёт busy; после ответа «в сети», через 20–40 c простоя «был недавно».
   useEffect(() => {
     if (!busyEffectRan.current) {
       busyEffectRan.current = true;
-      if (!busy) return; // начальный статус ставит entry-эффект ниже
+      if (!busy) return;
     }
     if (enterTimer.current) {
       clearTimeout(enterTimer.current);
@@ -96,10 +97,10 @@ export default function ChatScreen() {
     }
   }, [busy]);
 
-  // P1-6: вход/возврат в чат — иногда «был недавно / не в сети», затем через 1–3 c оживает в «в сети».
+  // Вход/возврат в чат — иногда «был недавно / не в сети», затем через 1–3 c «в сети».
   useEffect(() => {
     const enter = () => {
-      if (busyRef.current) return; // печатает — статусом управляет busy-эффект
+      if (busyRef.current) return;
       if (idleTimer.current) {
         clearTimeout(idleTimer.current);
         idleTimer.current = null;
@@ -124,8 +125,25 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const midHidden = expanded || focused; // города / режим / панель
+
+  // §3.2 механика 2: свайп по ввод-острову — влево развернуть, вправо свернуть.
+  const swipe = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-24, 24])
+        .failOffsetY([-14, 14])
+        .onEnd((e) => {
+          'worklet';
+          if (e.translationX <= -40) runOnJS(setExpanded)(true);
+          else if (e.translationX >= 40) runOnJS(setExpanded)(false);
+        }),
+    []
+  );
+
   const onSend = () => {
     if (!text.trim()) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     send(text);
     setText('');
   };
@@ -153,42 +171,57 @@ export default function ChatScreen() {
     <View style={[styles.root, { backgroundColor: c.bg }]}>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
 
-      {/* Шапка в стиле malvah */}
-      <View style={[styles.header, { borderBottomColor: c.line }]}>
-        <View style={styles.brandRow}>
-          <Image
-            source={require('../../assets/mascot.png')}
-            style={[styles.avatar, { borderColor: c.line }]}
-          />
-          <View>
-            <Text style={[styles.brand, { color: c.text }]}>PabLito<Text style={{ color: c.accent }}>_</Text></Text>
-            <Text style={[styles.mono, { color: c.textMuted }]}>ES-AR · TU AMIGO PORTEÑO</Text>
+      {/* Шапка (обычный режим) */}
+      {!expanded && (
+        <View style={[styles.header, { borderBottomColor: c.line }]}>
+          <View style={styles.brandRow}>
+            <Image
+              source={require('../../assets/mascot.png')}
+              style={[styles.avatar, { borderColor: c.line }]}
+            />
+            <View>
+              <Text style={[styles.brand, { color: c.text }]}>PabLito<Text style={{ color: c.accent }}>_</Text></Text>
+              <Text style={[styles.mono, { color: c.textMuted }]}>ES-AR · TU AMIGO PORTEÑO</Text>
+              <View style={styles.presenceRow}>
+                <View style={[styles.presenceDot, { backgroundColor: presenceColor(presence, c) }]} />
+                <Text style={[styles.presenceText, { color: c.textMuted }]}>{presenceLabel(presence)}</Text>
+              </View>
+            </View>
+          </View>
+          <View style={{ alignItems: 'flex-end', gap: 6 }}>
+            <Pressable onPress={() => setPronOpen(true)} style={[styles.practice, { borderColor: c.line }]}>
+              <Sparkles size={13} color={c.text} />
+              <Text style={{ color: c.text, fontSize: 12, fontWeight: '600' }}>Práctica</Text>
+            </Pressable>
+            <View style={styles.moodPill}>
+              <Text style={[styles.mono, { color: c.textMuted }]}>ÁNIMO</Text>
+              <Text style={[styles.moodText, { color: c.text }]}>
+                {moodBadge.emoji} {moodBadge.label}
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Шапка-остров (развёрнутый режим) */}
+      {expanded && (
+        <Animated.View
+          entering={FadeInDown.duration(200)}
+          style={[styles.islandHeader, { backgroundColor: c.surface, borderColor: c.line }]}
+        >
+          <Image source={require('../../assets/mascot.png')} style={[styles.islandAvatar, { borderColor: c.line }]} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.islandName, { color: c.text }]}>Pablito</Text>
             <View style={styles.presenceRow}>
               <View style={[styles.presenceDot, { backgroundColor: presenceColor(presence, c) }]} />
               <Text style={[styles.presenceText, { color: c.textMuted }]}>{presenceLabel(presence)}</Text>
             </View>
           </View>
-        </View>
-        <View style={{ alignItems: 'flex-end', gap: 6 }}>
-          <Pressable onPress={() => setPronOpen(true)} style={[styles.practice, { borderColor: c.line }]}>
-            <Text style={{ color: c.text, fontSize: 12, fontWeight: '600' }}>🎙 Práctica</Text>
-          </Pressable>
-          <View style={styles.moodPill}>
-            <Text style={[styles.mono, { color: c.textMuted }]}>ÁNIMO</Text>
-            <Text style={[styles.moodText, { color: c.text }]}>
-              {moodBadge.emoji} {moodBadge.label}
-            </Text>
-          </View>
-        </View>
-      </View>
+        </Animated.View>
+      )}
 
       <PronunciationModal visible={pronOpen} onClose={() => setPronOpen(false)} c={c} />
-      <LearnedWordsModal
-        visible={wordsOpen}
-        onClose={() => setWordsOpen(false)}
-        c={c}
-        streak={streak}
-      />
+      <LearnedWordsModal visible={wordsOpen} onClose={() => setWordsOpen(false)} c={c} streak={streak} />
       <MemoryModal visible={memOpen} onClose={() => setMemOpen(false)} c={c} />
 
       <KeyboardAvoidingView
@@ -196,8 +229,8 @@ export default function ChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={8}
       >
-        {!focused && (
-          <>
+        {!midHidden && (
+          <Animated.View entering={FadeInUp.duration(180)} exiting={FadeOutUp.duration(140)}>
             <View style={[styles.controlBar, { borderBottomColor: c.line }]}>
               <View style={styles.controlSide}>
                 <View style={[styles.pill, { borderColor: c.line }]}>
@@ -211,10 +244,10 @@ export default function ChatScreen() {
               </View>
               <View style={styles.controlSide}>
                 <Pressable onPress={() => setWordsOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
-                  <Text style={{ fontSize: 15 }}>📖</Text>
+                  <BookOpen size={16} color={c.text} />
                 </Pressable>
                 <Pressable onPress={() => setMemOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
-                  <Text style={{ fontSize: 15 }}>🧠</Text>
+                  <Brain size={16} color={c.text} />
                 </Pressable>
               </View>
             </View>
@@ -236,58 +269,88 @@ export default function ChatScreen() {
               </View>
             </View>
             <CityStrip c={c} />
-          </>
+          </Animated.View>
         )}
-        <FlatList
-          ref={listRef}
-          data={messages}
-          keyExtractor={(m) => m.id}
-          contentContainerStyle={{ padding: space(2), gap: space(1.5) }}
-          renderItem={({ item }) => <Bubble msg={item} c={c} />}
-          ListFooterComponent={
-            busy ? (
-              <View style={styles.typing}>
-                <ActivityIndicator color={c.textMuted} />
-                <Text style={[styles.mono, { color: c.textMuted }]}>Pablito escribe…</Text>
-              </View>
-            ) : null
-          }
-        />
 
-        {/* Ввод */}
-        <View style={[styles.inputBar, { borderTopColor: c.line, backgroundColor: c.surface }]}>
-          <Pressable
-            onPress={onMic}
-            disabled={!ready}
-            style={[
-              styles.mic,
-              { borderColor: c.line, backgroundColor: recording ? c.accent : 'transparent' },
-            ]}
-          >
-            <Text style={{ fontSize: 18, color: recording ? c.accentText : c.text }}>
-              {recording ? '⏺' : '🎙'}
-            </Text>
-          </Pressable>
-          <TextInput
-            value={text}
-            onChangeText={setText}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
-            placeholder={recording ? 'Hablá… te escucho' : 'Escribí o hablá en español…'}
-            placeholderTextColor={c.textMuted}
-            style={[styles.input, { color: c.text, borderColor: c.line }]}
-            multiline
-            textAlignVertical="center"
-            onSubmitEditing={onSend}
+        <View style={styles.flex}>
+          <FlatList
+            data={data}
+            inverted
+            keyExtractor={(m) => m.id}
+            contentContainerStyle={{ padding: space(2), gap: space(1.5) }}
+            keyboardShouldPersistTaps="handled"
+            renderItem={({ item }) => <Bubble msg={item} c={c} />}
           />
-          <Pressable
-            onPress={onSend}
-            disabled={!ready || busy || !text.trim()}
-            style={[styles.send, { backgroundColor: c.accent, opacity: !text.trim() ? 0.4 : 1 }]}
-          >
-            <Text style={{ color: c.accentText, fontWeight: '700', fontSize: 16 }}>↑</Text>
-          </Pressable>
+          <View style={styles.fabWrap} pointerEvents="box-none">
+            <Pressable
+              onPress={() => setExpanded((e) => !e)}
+              style={({ pressed }) => [
+                styles.expandFab,
+                { borderColor: c.line, backgroundColor: c.surface, opacity: pressed ? 0.7 : 0.92 },
+              ]}
+            >
+              {expanded ? <Minimize2 size={13} color={c.text} /> : <Maximize2 size={13} color={c.text} />}
+              <Text style={[styles.expandTxt, { color: c.text }]}>{expanded ? 'Contraer' : 'Expandir'}</Text>
+            </Pressable>
+          </View>
         </View>
+
+        {busy ? (
+          <View style={styles.typing}>
+            <ActivityIndicator color={c.textMuted} />
+            <Text style={[styles.mono, { color: c.textMuted }]}>Pablito escribe…</Text>
+          </View>
+        ) : null}
+
+        {/* Ввод-остров (свайп по нему разворачивает/сворачивает чат) */}
+        <GestureDetector gesture={swipe}>
+          <View style={[styles.inputBar, { borderTopColor: c.line, backgroundColor: c.surface }]}>
+            <Pressable
+              onPress={onMic}
+              disabled={!ready}
+              style={({ pressed }) => [
+                styles.mic,
+                {
+                  borderColor: c.line,
+                  backgroundColor: recording ? c.accent : 'transparent',
+                  transform: [{ scale: pressed ? 0.92 : 1 }],
+                },
+              ]}
+            >
+              {recording ? (
+                <Square size={16} color={c.accentText} fill={c.accentText} />
+              ) : (
+                <Mic size={20} color={c.text} />
+              )}
+            </Pressable>
+            <TextInput
+              value={text}
+              onChangeText={setText}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              placeholder={recording ? 'Hablá… te escucho' : 'Escribí o hablá en español…'}
+              placeholderTextColor={c.textMuted}
+              style={[styles.input, { color: c.text, borderColor: c.line }]}
+              multiline
+              textAlignVertical="center"
+              onSubmitEditing={onSend}
+            />
+            <Pressable
+              onPress={onSend}
+              disabled={!ready || busy || !text.trim()}
+              style={({ pressed }) => [
+                styles.send,
+                {
+                  backgroundColor: c.accent,
+                  opacity: !text.trim() ? 0.4 : pressed ? 0.8 : 1,
+                  transform: [{ scale: pressed ? 0.92 : 1 }],
+                },
+              ]}
+            >
+              <Send size={18} color={c.accentText} strokeWidth={2.3} />
+            </Pressable>
+          </View>
+        </GestureDetector>
       </KeyboardAvoidingView>
     </View>
   );
@@ -319,14 +382,8 @@ function Bubble({ msg, c }: { msg: UiMessage; c: typeof light }) {
   };
 
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={isUser}
-      style={{ alignItems: isUser ? 'flex-end' : 'flex-start' }}
-    >
-      <Text style={[styles.mono, { color: c.textMuted, marginBottom: 4 }]}>
-        {isUser ? 'VOS' : 'PABLITO'}
-      </Text>
+    <Pressable onPress={onPress} disabled={isUser} style={{ alignItems: isUser ? 'flex-end' : 'flex-start' }}>
+      <Text style={[styles.mono, { color: c.textMuted, marginBottom: 4 }]}>{isUser ? 'VOS' : 'PABLITO'}</Text>
       <View
         style={[
           styles.bubble,
@@ -341,9 +398,7 @@ function Bubble({ msg, c }: { msg: UiMessage; c: typeof light }) {
         <Text style={{ color: isUser ? c.bubbleUserText : c.bubblePablitoText, fontSize: 16, lineHeight: 23 }}>
           {msg.text}
         </Text>
-        {loading ? (
-          <Text style={[styles.mono, { color: c.textMuted, marginTop: 6 }]}>перевожу…</Text>
-        ) : null}
+        {loading ? <Text style={[styles.mono, { color: c.textMuted, marginTop: 6 }]}>перевожу…</Text> : null}
         {show && tr ? (
           <View style={[styles.translation, { borderTopColor: c.line }]}>
             <Text style={{ color: c.textMuted, fontSize: 14, lineHeight: 20 }}>{tr}</Text>
@@ -372,11 +427,33 @@ const styles = StyleSheet.create({
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: space(1.25) },
   avatar: { width: 40, height: 40, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth },
   brand: { fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
-  mono: { fontFamily: 'monospace', fontSize: 10, letterSpacing: 1, textTransform: 'uppercase' },
+  mono: { fontFamily: 'SpaceMono', fontSize: 10, letterSpacing: 1, textTransform: 'uppercase' },
   presenceRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
   presenceDot: { width: 7, height: 7, borderRadius: 4 },
   presenceText: { fontSize: 11, fontWeight: '600' },
+  islandHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space(1.25),
+    marginTop: space(6),
+    marginHorizontal: space(2),
+    marginBottom: space(0.5),
+    paddingVertical: space(1),
+    paddingHorizontal: space(1.5),
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  islandAvatar: { width: 34, height: 34, borderRadius: 17, borderWidth: StyleSheet.hairlineWidth },
+  islandName: { fontSize: 16, fontWeight: '800', letterSpacing: -0.3 },
   practice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 16,
     paddingVertical: 6,
@@ -421,6 +498,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   moodText: { fontSize: 14, fontWeight: '600' },
+  fabWrap: { position: 'absolute', top: space(1), right: space(2) },
+  expandFab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 14,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+  },
+  expandTxt: { fontSize: 11, fontWeight: '700' },
   bubble: {
     maxWidth: '86%',
     paddingVertical: space(1.25),
@@ -429,12 +517,11 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   translation: { marginTop: 8, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth },
-  tapHint: { fontFamily: 'monospace', fontSize: 9, letterSpacing: 0.5, marginTop: 3, opacity: 0.6 },
-  typing: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingVertical: space(1) },
-
+  tapHint: { fontFamily: 'SpaceMono', fontSize: 9, letterSpacing: 0.5, marginTop: 3, opacity: 0.6 },
+  typing: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingHorizontal: space(2), paddingBottom: space(1) },
   inputBar: {
     flexDirection: 'row',
-    alignItems: 'center', // кнопки по центру относительно поля ввода
+    alignItems: 'center',
     gap: space(1),
     paddingHorizontal: space(1.5),
     paddingTop: space(1),
@@ -456,7 +543,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 22,
     paddingHorizontal: space(2),
-    // симметричные вертикальные паддинги → текст ровно по центру острова
     paddingVertical: Platform.OS === 'ios' ? 12 : 9,
     fontSize: 16,
   },
