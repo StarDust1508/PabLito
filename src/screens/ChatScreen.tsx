@@ -23,7 +23,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeInDown, FadeInUp, FadeOutUp, runOnJS } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { BookOpen, Brain, Maximize2, Mic, Minimize2, Plus, Search, Send, Sparkles, Square, X } from 'lucide-react-native';
+import { BookOpen, Brain, Maximize2, Mic, Minimize2, Paperclip, Plus, Search, Send, Sparkles, Square, X } from 'lucide-react-native';
 import { dark, light, space } from '@/theme/theme';
 import { usePablito, type UiMessage } from '@/hooks/usePablito';
 import CityStrip from '@/components/CityStrip';
@@ -36,6 +36,8 @@ import { countdownLabel } from '@/core/progress';
 import { requestMic, startRecording, stopRecording } from '@/core/voice';
 import { transcribe, translate, translateWord } from '@/api/navy';
 import * as mem from '@/core/memory';
+import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 
 type Presence = 'online' | 'typing' | 'recent' | 'offline';
 const rand = (min: number, max: number) => min + Math.floor(Math.random() * (max - min));
@@ -65,7 +67,7 @@ function tokenizeWords(text: string): { t: string; w: boolean }[] {
 export default function ChatScreen() {
   const scheme = useColorScheme();
   const c = scheme === 'dark' ? dark : light;
-  const { messages, moodBadge, busy, ready, send, name, streak, daysToMove, lessonMode, setLessonMode } =
+  const { messages, moodBadge, busy, ready, send, sendPhoto, name, streak, daysToMove, lessonMode, setLessonMode } =
     usePablito();
   const [text, setText] = useState('');
   const [recording, setRecording] = useState(false);
@@ -231,6 +233,24 @@ export default function ChatScreen() {
       if (!ok) return;
       await startRecording();
       setRecording(true);
+    }
+  };
+
+  // §4: выбрать фото → ресайз ≤768px + сжатие → на разбор Паблито по-испански.
+  const onPhoto = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const res = await ImagePicker.launchImageLibraryAsync({ quality: 1 });
+    if (res.canceled || !res.assets?.[0]) return;
+    try {
+      const m = await ImageManipulator.manipulateAsync(res.assets[0].uri, [{ resize: { width: 768 } }], {
+        compress: 0.5,
+        format: ImageManipulator.SaveFormat.JPEG,
+        base64: true,
+      });
+      if (m.base64) sendPhoto(m.base64, 'image/jpeg', m.uri);
+    } catch {
+      /* не удалось обработать фото — тихо */
     }
   };
 
@@ -525,6 +545,9 @@ export default function ChatScreen() {
                 <Mic size={20} color={c.text} />
               )}
             </Pressable>
+            <Pressable onPress={onPhoto} disabled={!ready} style={[styles.mic, { borderColor: c.line }]}>
+              <Paperclip size={18} color={c.text} />
+            </Pressable>
             <TextInput
               value={text}
               onChangeText={setText}
@@ -596,17 +619,20 @@ function Bubble({ msg, c, onWord }: { msg: UiMessage; c: typeof light; onWord: (
           },
         ]}
       >
-        <Text style={{ color: isUser ? c.bubbleUserText : c.bubblePablitoText, fontSize: 16, lineHeight: 23 }}>
-          {tokenizeWords(msg.text).map((tok, i) =>
-            tok.w ? (
-              <Text key={i} onPress={onPress} onLongPress={() => onWord(tok.t, msg.text)}>
-                {tok.t}
-              </Text>
-            ) : (
-              <Text key={i}>{tok.t}</Text>
-            )
-          )}
-        </Text>
+        {msg.image ? <Image source={{ uri: msg.image }} style={styles.bubbleImg} /> : null}
+        {msg.text ? (
+          <Text style={{ color: isUser ? c.bubbleUserText : c.bubblePablitoText, fontSize: 16, lineHeight: 23 }}>
+            {tokenizeWords(msg.text).map((tok, i) =>
+              tok.w ? (
+                <Text key={i} onPress={onPress} onLongPress={() => onWord(tok.t, msg.text)}>
+                  {tok.t}
+                </Text>
+              ) : (
+                <Text key={i}>{tok.t}</Text>
+              )
+            )}
+          </Text>
+        ) : null}
         {loading ? <Text style={[styles.mono, { color: c.textMuted, marginTop: 6 }]}>перевожу…</Text> : null}
         {show && tr ? (
           <View style={[styles.translation, { borderTopColor: c.line }]}>
@@ -738,6 +764,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
   },
+  bubbleImg: { width: 220, height: 220, borderRadius: 12, marginBottom: 4 },
   translation: { marginTop: 8, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth },
   wordOverlay: {
     flex: 1,

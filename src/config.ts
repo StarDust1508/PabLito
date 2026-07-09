@@ -20,6 +20,7 @@ export const CONFIG = {
     chat: process.env.EXPO_PUBLIC_MODEL_CHAT ?? 'deepseek-v4-flash',
     deep: process.env.EXPO_PUBLIC_MODEL_DEEP ?? 'deepseek-v4-pro',
     stt: process.env.EXPO_PUBLIC_MODEL_STT ?? 'whisper-1',
+    vision: process.env.EXPO_PUBLIC_MODEL_VISION ?? 'deepseek-v4-pro',
   },
 } as const;
 

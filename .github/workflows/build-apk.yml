@@ -42,6 +42,7 @@ jobs:
             echo "EXPO_PUBLIC_MODEL_CHAT=deepseek-v4-flash"
             echo "EXPO_PUBLIC_MODEL_DEEP=deepseek-v4-pro"
             echo "EXPO_PUBLIC_MODEL_STT=whisper-1"
+            echo "EXPO_PUBLIC_MODEL_VISION=deepseek-v4-pro"
           } > .env
 
       - name: Prebuild (генерируем нативный android-проект)

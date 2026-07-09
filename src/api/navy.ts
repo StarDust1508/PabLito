@@ -57,6 +57,39 @@ export async function chat(messages: ChatMessage[], opts: ChatOptions = {}): Pro
   return content.trim();
 }
 
+/**
+ * §4: разбор фото. Картинка уходит ОДИН раз vision-модели (OpenAI-совместимый формат
+ * content[]). base64 НЕ кладётся в постоянную историю чата — иначе пере-отправка каждый ход.
+ * Если модель не поддерживает vision — бросает, вызывающий деградирует мягко.
+ */
+export async function chatVision(imageBase64: string, mime: string, systemPrompt: string): Promise<string> {
+  const messages: unknown[] = [];
+  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+  messages.push({
+    role: 'user',
+    content: [
+      {
+        type: 'text',
+        text: 'Mirá esta foto y comentala en español rioplatense, con onda: describí brevemente lo que ves y hacele UNA pregunta al alumno sobre ella para seguir la charla. 1-3 frases, natural.',
+      },
+      { type: 'image_url', image_url: { url: `data:${mime};base64,${imageBase64}` } },
+    ],
+  });
+  const res = await fetch(`${CONFIG.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ model: CONFIG.models.vision, messages, temperature: 0.7 }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`NavyAI vision ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const content: string | undefined = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error('NavyAI vision: пустой ответ');
+  return content.trim();
+}
+
 /** Перевод текста на русский (для «перевод по тапу»). Возвращает только перевод. */
 export async function translate(text: string): Promise<string> {
   return chat(

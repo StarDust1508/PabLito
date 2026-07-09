@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { chat, chatStream, type ChatMessage } from '@/api/navy';
+import { chat, chatStream, chatVision, type ChatMessage } from '@/api/navy';
 import { setSpeechMuted, speak } from '@/core/voice';
 import { buildSystemPrompt, extractMemory, extractProfile, openingUserTurn, type ModelMoodSignal } from '@/core/personality';
 import { DayTone, Mood, MoodEvent, applyEvents, decayToward, moodLabel, pickDayTone } from '@/core/mood';
@@ -16,6 +16,7 @@ export interface UiMessage {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  image?: string; // §4: локальный uri фото (пузырь пользователя)
 }
 
 const uid = () => Math.random().toString(36).slice(2);
@@ -355,6 +356,53 @@ export function usePablito() {
     [ready, busy, rebuildSystem, runAssistant]
   );
 
+  // §4: отправка фото на разбор. Картинка уходит vision-модели один раз; в историю —
+  // текст-заглушка (без base64), чтобы не пере-отправлять её на каждом следующем ходу.
+  const sendPhoto = useCallback(
+    async (base64: string, mime: string, uri: string) => {
+      if (busy || sending.current) return;
+      sending.current = true;
+      try {
+        setMessages((prev) => [...prev, { id: uid(), role: 'user', text: '', image: uri }]);
+        history.current.push({ role: 'user', content: '[El alumno mandó una foto para comentar]' });
+        persist('user', '[foto]');
+        await rebuildSystem(moodRef.current);
+
+        const asstId = uid();
+        setBusy(true);
+        await new Promise<void>((r) => setTimeout(r, 800 + Math.floor(Math.random() * 1500)));
+        setMessages((prev) => [...prev, { id: asstId, role: 'assistant', text: '' }]);
+        const patch = (t: string) =>
+          setMessages((prev) => prev.map((m) => (m.id === asstId ? { ...m, text: t } : m)));
+
+        const sys = history.current[0]?.role === 'system' ? history.current[0].content : '';
+        let full = '';
+        try {
+          full = await chatVision(base64, mime, sys);
+        } catch {
+          patch('¡Uy! No pude ver la foto — puede que el modelo todavía no soporte imágenes. Contame vos qué hay ahí 🙂');
+          setBusy(false);
+          return;
+        }
+        const memRes = extractMemory(full);
+        let clean = memRes.clean;
+        if (/\[\[(MEM|SET)/.test(clean)) clean = clean.replace(/\[\[(MEM|SET)[\s\S]*$/, '').trim();
+        patch(clean);
+        history.current.push({ role: 'assistant', content: clean });
+        persist('assistant', clean);
+        for (const f of memRes.facts) await mem.upsertFact(f, sessionId.current);
+        if (memRes.vocab.length) await mem.upsertVocab(memRes.vocab);
+        lastTurnAt.current = Date.now();
+        await mem.touchLastSeen();
+        setBusy(false);
+        speak(clean);
+      } finally {
+        sending.current = false;
+      }
+    },
+    [busy, persist, rebuildSystem]
+  );
+
   return {
     messages,
     mood,
@@ -362,6 +410,7 @@ export function usePablito() {
     busy,
     ready,
     send,
+    sendPhoto,
     name,
     streak,
     daysToMove,
