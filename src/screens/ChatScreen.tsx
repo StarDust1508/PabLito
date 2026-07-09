@@ -31,6 +31,7 @@ import PronunciationModal from '@/screens/PronunciationModal';
 import LearnedWordsModal from '@/screens/LearnedWordsModal';
 import MemoryModal from '@/screens/MemoryModal';
 import ProfileDrawer from '@/screens/ProfileDrawer';
+import KineticWordmark from '@/components/KineticWordmark';
 import { countdownLabel } from '@/core/progress';
 import { requestMic, startRecording, stopRecording } from '@/core/voice';
 import { transcribe, translate, translateWord } from '@/api/navy';
@@ -285,7 +286,7 @@ export default function ChatScreen() {
               />
             </Pressable>
             <View>
-              <Text style={[styles.brand, { color: c.text }]}>PabLito<Text style={{ color: c.accent }}>_</Text></Text>
+              <KineticWordmark c={c} />
               <Text style={[styles.mono, { color: c.textMuted }]}>ES-AR · TU AMIGO PORTEÑO</Text>
               <View style={styles.presenceRow}>
                 <View style={[styles.presenceDot, { backgroundColor: presenceColor(presence, c) }]} />
