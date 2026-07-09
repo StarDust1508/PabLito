@@ -9,6 +9,16 @@ import * as Speech from 'expo-speech';
 import { synthesize } from '@/api/navy';
 
 let recording: Audio.Recording | null = null;
+let _muted = false;
+
+/** Глобальный мьют озвучки (настройка «звук вкл/выкл» из шторки). */
+export function setSpeechMuted(m: boolean): void {
+  _muted = m;
+  if (m) stopSpeaking();
+}
+export function isSpeechMuted(): boolean {
+  return _muted;
+}
 
 export async function requestMic(): Promise<boolean> {
   const { granted } = await Audio.requestPermissionsAsync();
@@ -43,6 +53,7 @@ export async function stopRecording(): Promise<string | null> {
 
 /** Озвучить текст. Argentina-first голос. */
 export async function speak(text: string): Promise<void> {
+  if (_muted) return;
   try {
     const buf = await synthesize(text, 'onyx');
     const path = `${FileSystem.cacheDirectory}pablito-${Date.now()}.mp3`;

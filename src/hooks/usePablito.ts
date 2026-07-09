@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { chat, chatStream, type ChatMessage } from '@/api/navy';
-import { speak } from '@/core/voice';
+import { setSpeechMuted, speak } from '@/core/voice';
 import { buildSystemPrompt, extractMemory, extractProfile, openingUserTurn, type ModelMoodSignal } from '@/core/personality';
 import { DayTone, Mood, MoodEvent, applyEvents, decayToward, moodLabel, pickDayTone } from '@/core/mood';
 import { Streak, computeStreak, daysUntil, todayKey } from '@/core/progress';
@@ -219,6 +219,8 @@ export function usePablito() {
     if (inited.current) return; // StrictMode dev-double-mount не создаёт вторую сессию
     inited.current = true;
     (async () => {
+      await mem.pruneOldData(30); // §6 ретеншн: чистим сырые транскрипты старше 30 дней (память сохраняется)
+      setSpeechMuted((await mem.getSetting('tts_muted')) === '1'); // §6 настройка озвучки
       const last = await mem.getLastSeen();
       daysSinceLast.current = mem.daysBetween(last);
       await mem.touchLastSeen();
@@ -282,7 +284,7 @@ export function usePablito() {
       setMood(m);
       await mem.saveMood(m);
 
-      sessionId.current = await mem.startSession();
+      sessionId.current = await mem.startSession(lessonRef.current);
       turnIndex.current = 0;
       await rebuildSystem(m);
 

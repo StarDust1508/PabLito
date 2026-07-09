@@ -109,6 +109,7 @@ async function migrate(d: SQLite.SQLiteDatabase): Promise<void> {
       { name: 'ended_at', ddl: 'ended_at INTEGER' },
       { name: 'turn_count', ddl: 'turn_count INTEGER NOT NULL DEFAULT 0' },
       { name: 'mood_end', ddl: 'mood_end TEXT' },
+      { name: 'mode', ddl: "mode TEXT NOT NULL DEFAULT 'chat'" },
     ]);
   }
 
@@ -191,7 +192,8 @@ const SESSIONS_DDL = `CREATE TABLE IF NOT EXISTS sessions (
   ended_at INTEGER,
   turn_count INTEGER NOT NULL DEFAULT 0,
   summary TEXT,
-  mood_end TEXT
+  mood_end TEXT,
+  mode TEXT NOT NULL DEFAULT 'chat'
 );`;
 
 async function db(): Promise<SQLite.SQLiteDatabase> {
@@ -216,6 +218,14 @@ async function kvGet(key: string): Promise<string | null> {
 async function kvSet(key: string, value: string): Promise<void> {
   const d = await db();
   await d.runAsync('INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)', [key, value]);
+}
+
+/* ------------------------------ настройки (generic) ------------------------------ */
+export async function getSetting(key: string): Promise<string | null> {
+  return kvGet(`setting_${key}`);
+}
+export function setSetting(key: string, value: string): Promise<void> {
+  return enqueue(() => kvSet(`setting_${key}`, value));
 }
 
 /* ------------------------------ настроение ------------------------------ */
@@ -556,9 +566,9 @@ export async function getLastMessages(sessionId: number, n: number): Promise<{ r
 }
 
 /* ------------------------------ сессии ------------------------------ */
-export async function startSession(): Promise<number> {
+export async function startSession(mode: LessonMode = 'chat'): Promise<number> {
   const d = await db();
-  const res = await d.runAsync('INSERT INTO sessions (started_at) VALUES (?)', [Date.now()]);
+  const res = await d.runAsync('INSERT INTO sessions (started_at, mode) VALUES (?, ?)', [Date.now(), mode]);
   return res.lastInsertRowId;
 }
 export async function getOpenSession(): Promise<{ id: number; started_at: number } | null> {
@@ -593,6 +603,60 @@ export async function getLastSessionSummary(excludeId?: number): Promise<string 
     [excludeId ?? -1]
   );
   return row?.summary ?? null;
+}
+
+/** §6: список сессий за N дней (для истории в шторке). Новейшие первыми. */
+export interface SessionRow {
+  id: number;
+  started_at: number;
+  summary: string | null;
+  mode: LessonMode;
+}
+export async function getSessions(sinceDays = 30): Promise<SessionRow[]> {
+  const d = await db();
+  const cutoff = Date.now() - sinceDays * 86_400_000;
+  const rows = await d.getAllAsync<{ id: number; started_at: number; summary: string | null; mode: string | null }>(
+    'SELECT id, started_at, summary, mode FROM sessions WHERE started_at >= ? ORDER BY id DESC',
+    [cutoff]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    started_at: r.started_at,
+    summary: r.summary,
+    mode: r.mode === 'lesson' ? 'lesson' : 'chat',
+  }));
+}
+
+/** §5: поиск по переписке (подстрока в content). Возвращает совпадения с id сессии. */
+export interface MessageHit {
+  id: number;
+  session_id: number;
+  role: MsgRole;
+  content: string;
+  created_at: number;
+}
+export async function searchMessages(query: string, limit = 40): Promise<MessageHit[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const d = await db();
+  const like = `%${q.replace(/[%_\\]/g, (m) => '\\' + m)}%`;
+  return d.getAllAsync<MessageHit>(
+    "SELECT id, session_id, role, content, created_at FROM messages WHERE role != 'system' AND content LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ?",
+    [like, limit]
+  );
+}
+
+/**
+ * §6 ретеншн: удаляем СЫРЫЕ транскрипты старше N дней (messages + завершённые sessions),
+ * но НЕ факты/словарь/моменты/обещания — долгая память сохраняется. Открытую сессию не трогаем.
+ */
+export function pruneOldData(days = 30): Promise<void> {
+  return enqueue(async () => {
+    const d = await db();
+    const cutoff = Date.now() - days * 86_400_000;
+    await d.runAsync('DELETE FROM messages WHERE created_at < ?', [cutoff]);
+    await d.runAsync('DELETE FROM sessions WHERE started_at < ? AND ended_at IS NOT NULL', [cutoff]);
+  });
 }
 
 /* ------------------------------ тонус дня + счётчики ------------------------------ */

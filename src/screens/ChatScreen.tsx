@@ -30,6 +30,7 @@ import CityStrip from '@/components/CityStrip';
 import PronunciationModal from '@/screens/PronunciationModal';
 import LearnedWordsModal from '@/screens/LearnedWordsModal';
 import MemoryModal from '@/screens/MemoryModal';
+import ProfileDrawer from '@/screens/ProfileDrawer';
 import { countdownLabel } from '@/core/progress';
 import { requestMic, startRecording, stopRecording } from '@/core/voice';
 import { transcribe, translate, translateWord } from '@/api/navy';
@@ -63,7 +64,7 @@ function tokenizeWords(text: string): { t: string; w: boolean }[] {
 export default function ChatScreen() {
   const scheme = useColorScheme();
   const c = scheme === 'dark' ? dark : light;
-  const { messages, moodBadge, busy, ready, send, streak, daysToMove, lessonMode, setLessonMode } =
+  const { messages, moodBadge, busy, ready, send, name, streak, daysToMove, lessonMode, setLessonMode } =
     usePablito();
   const [text, setText] = useState('');
   const [recording, setRecording] = useState(false);
@@ -72,6 +73,7 @@ export default function ChatScreen() {
   const [memOpen, setMemOpen] = useState(false);
   const [focused, setFocused] = useState(false); // при письме прячем среднюю зону
   const [expanded, setExpanded] = useState(false); // раскрытие чата на весь экран
+  const [drawerOpen, setDrawerOpen] = useState(false); // §6 шторка профиля
   const countdown = countdownLabel(daysToMove);
 
   // §2: поповер перевода отдельного слова + кэш переводов слов (не дёргаем модель повторно).
@@ -227,10 +229,12 @@ export default function ChatScreen() {
       {!expanded && (
         <View style={[styles.header, { borderBottomColor: c.line }]}>
           <View style={styles.brandRow}>
-            <Image
-              source={require('../../assets/mascot.png')}
-              style={[styles.avatar, { borderColor: c.line }]}
-            />
+            <Pressable onPress={() => setDrawerOpen(true)}>
+              <Image
+                source={require('../../assets/mascot.png')}
+                style={[styles.avatar, { borderColor: c.line }]}
+              />
+            </Pressable>
             <View>
               <Text style={[styles.brand, { color: c.text }]}>PabLito<Text style={{ color: c.accent }}>_</Text></Text>
               <Text style={[styles.mono, { color: c.textMuted }]}>ES-AR · TU AMIGO PORTEÑO</Text>
@@ -261,7 +265,9 @@ export default function ChatScreen() {
           entering={FadeInDown.duration(200)}
           style={[styles.islandHeader, { backgroundColor: c.surface, borderColor: c.line }]}
         >
-          <Image source={require('../../assets/mascot.png')} style={[styles.islandAvatar, { borderColor: c.line }]} />
+          <Pressable onPress={() => setDrawerOpen(true)}>
+            <Image source={require('../../assets/mascot.png')} style={[styles.islandAvatar, { borderColor: c.line }]} />
+          </Pressable>
           <View style={{ flex: 1 }}>
             <Text style={[styles.islandName, { color: c.text }]}>Pablito</Text>
             <View style={styles.presenceRow}>
@@ -275,6 +281,21 @@ export default function ChatScreen() {
       <PronunciationModal visible={pronOpen} onClose={() => setPronOpen(false)} c={c} />
       <LearnedWordsModal visible={wordsOpen} onClose={() => setWordsOpen(false)} c={c} streak={streak} />
       <MemoryModal visible={memOpen} onClose={() => setMemOpen(false)} c={c} />
+
+      <ProfileDrawer
+        visible={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        c={c}
+        name={name}
+        streak={streak}
+        daysToMove={daysToMove}
+        lessonMode={lessonMode}
+        setLessonMode={setLessonMode}
+        onOpenMemory={() => {
+          setDrawerOpen(false);
+          setMemOpen(true);
+        }}
+      />
 
       {/* §2: поповер перевода слова */}
       <Modal visible={wordPop !== null} transparent animationType="fade" onRequestClose={() => setWordPop(null)}>
