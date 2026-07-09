@@ -23,7 +23,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeInDown, FadeInUp, FadeOutUp, runOnJS } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { BookOpen, Brain, Maximize2, Mic, Minimize2, Plus, Send, Sparkles, Square } from 'lucide-react-native';
+import { BookOpen, Brain, Maximize2, Mic, Minimize2, Plus, Search, Send, Sparkles, Square, X } from 'lucide-react-native';
 import { dark, light, space } from '@/theme/theme';
 import { usePablito, type UiMessage } from '@/hooks/usePablito';
 import CityStrip from '@/components/CityStrip';
@@ -74,6 +74,10 @@ export default function ChatScreen() {
   const [focused, setFocused] = useState(false); // при письме прячем среднюю зону
   const [expanded, setExpanded] = useState(false); // раскрытие чата на весь экран
   const [drawerOpen, setDrawerOpen] = useState(false); // §6 шторка профиля
+  const [searchOpen, setSearchOpen] = useState(false); // §5 поиск по чату
+  const [searchQ, setSearchQ] = useState('');
+  const [searchResults, setSearchResults] = useState<mem.MessageHit[]>([]);
+  const listRef = useRef<FlatList<UiMessage>>(null);
   const countdown = countdownLabel(daysToMove);
 
   // §2: поповер перевода отдельного слова + кэш переводов слов (не дёргаем модель повторно).
@@ -157,6 +161,51 @@ export default function ChatScreen() {
       }),
     []
   );
+
+  // §6: edge-swipe от левого края ленты → открыть шторку профиля.
+  const edgeSwipe = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX(12)
+        .failOffsetY([-20, 20])
+        .onEnd((e) => {
+          'worklet';
+          if (e.translationX > 36) runOnJS(setDrawerOpen)(true);
+        }),
+    []
+  );
+
+  // §5: поиск по переписке — перезапрос при каждом вводе, пока открыт оверлей.
+  useEffect(() => {
+    if (!searchOpen) return;
+    const q = searchQ.trim();
+    if (!q) {
+      setSearchResults([]);
+      return;
+    }
+    let alive = true;
+    mem
+      .searchMessages(q, 40)
+      .then((r) => alive && setSearchResults(r))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [searchQ, searchOpen]);
+
+  const jumpToHit = (hit: mem.MessageHit) => {
+    setSearchOpen(false);
+    const mi = messages.findIndex((m) => m.text === hit.content);
+    if (mi < 0) return; // из другой (не загруженной) сессии — просто закрываем
+    const idx = messages.length - 1 - mi; // индекс в инвертированной data
+    requestAnimationFrame(() => {
+      try {
+        listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
+      } catch {
+        /* не измерено — игнорируем */
+      }
+    });
+  };
 
   const onSend = () => {
     if (!text.trim()) return;
@@ -297,6 +346,47 @@ export default function ChatScreen() {
         }}
       />
 
+      {/* §5: поиск по переписке */}
+      <Modal visible={searchOpen} transparent animationType="fade" onRequestClose={() => setSearchOpen(false)}>
+        <View style={[styles.searchWrap, { backgroundColor: c.bg }]}>
+          <View style={[styles.searchBar, { borderColor: c.line, backgroundColor: c.surface }]}>
+            <Search size={18} color={c.textMuted} />
+            <TextInput
+              value={searchQ}
+              onChangeText={setSearchQ}
+              autoFocus
+              placeholder="Найти в переписке…"
+              placeholderTextColor={c.textMuted}
+              style={{ flex: 1, color: c.text, fontSize: 16 }}
+            />
+            <Pressable onPress={() => setSearchOpen(false)} hitSlop={10}>
+              <X size={20} color={c.textMuted} />
+            </Pressable>
+          </View>
+          <FlatList
+            data={searchResults}
+            keyExtractor={(h) => String(h.id)}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ padding: space(2), gap: space(1) }}
+            ListEmptyComponent={
+              searchQ.trim() ? (
+                <Text style={[styles.mono, { color: c.textMuted, textAlign: 'center', marginTop: space(3) }]}>
+                  ничего не найдено
+                </Text>
+              ) : null
+            }
+            renderItem={({ item }) => (
+              <Pressable onPress={() => jumpToHit(item)} style={[styles.searchRow, { borderColor: c.line }]}>
+                <Text style={[styles.mono, { color: c.textMuted }]}>{item.role === 'user' ? 'ВЫ' : 'PABLITO'}</Text>
+                <Text style={{ color: c.text, fontSize: 15, lineHeight: 20, marginTop: 2 }} numberOfLines={3}>
+                  {item.content}
+                </Text>
+              </Pressable>
+            )}
+          />
+        </View>
+      </Modal>
+
       {/* §2: поповер перевода слова */}
       <Modal visible={wordPop !== null} transparent animationType="fade" onRequestClose={() => setWordPop(null)}>
         <Pressable style={styles.wordOverlay} onPress={() => setWordPop(null)}>
@@ -340,6 +430,9 @@ export default function ChatScreen() {
                 ) : null}
               </View>
               <View style={styles.controlSide}>
+                <Pressable onPress={() => setSearchOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
+                  <Search size={16} color={c.text} />
+                </Pressable>
                 <Pressable onPress={() => setWordsOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
                   <BookOpen size={16} color={c.text} />
                 </Pressable>
@@ -371,11 +464,13 @@ export default function ChatScreen() {
 
         <View style={styles.flex}>
           <FlatList
+            ref={listRef}
             data={data}
             inverted
             keyExtractor={(m) => m.id}
             contentContainerStyle={{ padding: space(2), gap: space(1.5) }}
             keyboardShouldPersistTaps="handled"
+            onScrollToIndexFailed={() => {}}
             renderItem={({ item }) => <Bubble msg={item} c={c} onWord={openWord} />}
           />
           <View style={styles.fabWrap} pointerEvents="box-none">
@@ -390,6 +485,9 @@ export default function ChatScreen() {
               <Text style={[styles.expandTxt, { color: c.text }]}>{expanded ? 'Contraer' : 'Expandir'}</Text>
             </Pressable>
           </View>
+          <GestureDetector gesture={edgeSwipe}>
+            <View style={styles.edgeZone} />
+          </GestureDetector>
         </View>
 
         {busy ? (
@@ -619,6 +717,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   expandTxt: { fontSize: 11, fontWeight: '700' },
+  edgeZone: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 16 },
+  searchWrap: { flex: 1, paddingTop: space(7) },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space(1),
+    marginHorizontal: space(2),
+    paddingHorizontal: space(1.75),
+    paddingVertical: space(1.25),
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 18,
+  },
+  searchRow: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, padding: space(1.5) },
   bubble: {
     maxWidth: '86%',
     paddingVertical: space(1.25),
