@@ -69,6 +69,24 @@ export async function translate(text: string): Promise<string> {
 }
 
 /**
+ * Перевод ОДНОГО слова в контексте фразы — точнее, чем слово в отрыве
+ * (banco = скамейка/банк решается по контексту). Возвращает краткий русский эквивалент.
+ */
+export async function translateWord(word: string, sentence: string): Promise<string> {
+  return chat(
+    [
+      {
+        role: 'system',
+        content:
+          'Sos un diccionario español→ruso. Te doy una palabra y la oración donde aparece. Devolvé SOLO la traducción al ruso de esa palabra EN ESE contexto (1-3 palabras), sin comillas ni explicaciones.',
+      },
+      { role: 'user', content: `Palabra: ${word}\nOración: ${sentence}` },
+    ],
+    { temperature: 0.2 }
+  );
+}
+
+/**
  * Потоковый чат (SSE). Вызывает onDelta(полныйТекстНаТекущийМомент) по мере
  * прихода токенов и возвращает финальный текст. Использует expo/fetch, который
  * умеет читать тело ответа потоком. При любой ошибке потока бросает — вызывающий

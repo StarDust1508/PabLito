@@ -10,6 +10,7 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -22,7 +23,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeInDown, FadeInUp, FadeOutUp, runOnJS } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { BookOpen, Brain, Maximize2, Mic, Minimize2, Send, Sparkles, Square } from 'lucide-react-native';
+import { BookOpen, Brain, Maximize2, Mic, Minimize2, Plus, Send, Sparkles, Square } from 'lucide-react-native';
 import { dark, light, space } from '@/theme/theme';
 import { usePablito, type UiMessage } from '@/hooks/usePablito';
 import CityStrip from '@/components/CityStrip';
@@ -31,7 +32,8 @@ import LearnedWordsModal from '@/screens/LearnedWordsModal';
 import MemoryModal from '@/screens/MemoryModal';
 import { countdownLabel } from '@/core/progress';
 import { requestMic, startRecording, stopRecording } from '@/core/voice';
-import { transcribe, translate } from '@/api/navy';
+import { transcribe, translate, translateWord } from '@/api/navy';
+import * as mem from '@/core/memory';
 
 type Presence = 'online' | 'typing' | 'recent' | 'offline';
 const rand = (min: number, max: number) => min + Math.floor(Math.random() * (max - min));
@@ -49,6 +51,15 @@ function presenceColor(p: Presence, c: typeof light): string {
   return c.textMuted;
 }
 
+// §2: разбивка текста на слова (латиница + испанские буквы), пунктуация/пробелы сохраняются.
+const WORD_RE = /[A-Za-zÀ-ÿ]+/;
+function tokenizeWords(text: string): { t: string; w: boolean }[] {
+  return text
+    .split(/([A-Za-zÀ-ÿ]+)/)
+    .filter((s) => s.length > 0)
+    .map((s) => ({ t: s, w: WORD_RE.test(s) }));
+}
+
 export default function ChatScreen() {
   const scheme = useColorScheme();
   const c = scheme === 'dark' ? dark : light;
@@ -62,6 +73,13 @@ export default function ChatScreen() {
   const [focused, setFocused] = useState(false); // при письме прячем среднюю зону
   const [expanded, setExpanded] = useState(false); // раскрытие чата на весь экран
   const countdown = countdownLabel(daysToMove);
+
+  // §2: поповер перевода отдельного слова + кэш переводов слов (не дёргаем модель повторно).
+  const wordCache = useRef<Map<string, string>>(new Map());
+  const [wordPop, setWordPop] = useState<string | null>(null);
+  const [wordTr, setWordTr] = useState<string | null>(null);
+  const [wordLoading, setWordLoading] = useState(false);
+  const [wordAdded, setWordAdded] = useState(false);
 
   // P1-6: присутствие «в сети / печатает / был недавно». Чистая UI-симуляция.
   const [presence, setPresence] = useState<Presence>('online');
@@ -130,14 +148,11 @@ export default function ChatScreen() {
   // §3.2 механика 2: свайп по ввод-острову — влево развернуть, вправо свернуть.
   const swipe = useMemo(
     () =>
-      Gesture.Pan()
-        .activeOffsetX([-24, 24])
-        .failOffsetY([-14, 14])
-        .onEnd((e) => {
-          'worklet';
-          if (e.translationX <= -40) runOnJS(setExpanded)(true);
-          else if (e.translationX >= 40) runOnJS(setExpanded)(false);
-        }),
+      Gesture.Pan().onEnd((e) => {
+        'worklet';
+        if (e.translationY <= -28) runOnJS(setExpanded)(true);
+        else if (e.translationY >= 28) runOnJS(setExpanded)(false);
+      }),
     []
   );
 
@@ -164,6 +179,43 @@ export default function ChatScreen() {
       if (!ok) return;
       await startRecording();
       setRecording(true);
+    }
+  };
+
+  const openWord = async (raw: string, sentence: string) => {
+    const word = raw.trim();
+    if (!word) return;
+    setWordPop(word);
+    setWordAdded(false);
+    const key = word.toLowerCase();
+    const cached = wordCache.current.get(key);
+    if (cached) {
+      setWordTr(cached);
+      setWordLoading(false);
+      return;
+    }
+    setWordTr(null);
+    setWordLoading(true);
+    try {
+      // §2 (улучшено): перевод слова В КОНТЕКСТЕ фразы — точнее, чем в отрыве.
+      const t = await translateWord(word, sentence);
+      wordCache.current.set(key, t);
+      setWordTr(t);
+    } catch {
+      /* нет сети — тихо */
+    } finally {
+      setWordLoading(false);
+    }
+  };
+
+  const addWord = async () => {
+    if (!wordPop || !wordTr) return;
+    try {
+      await mem.upsertVocab([{ word: wordPop.toLowerCase(), translation: wordTr, context: 'new' }]);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      setWordAdded(true);
+    } catch {
+      /* тихо */
     }
   };
 
@@ -224,6 +276,30 @@ export default function ChatScreen() {
       <LearnedWordsModal visible={wordsOpen} onClose={() => setWordsOpen(false)} c={c} streak={streak} />
       <MemoryModal visible={memOpen} onClose={() => setMemOpen(false)} c={c} />
 
+      {/* §2: поповер перевода слова */}
+      <Modal visible={wordPop !== null} transparent animationType="fade" onRequestClose={() => setWordPop(null)}>
+        <Pressable style={styles.wordOverlay} onPress={() => setWordPop(null)}>
+          <Pressable style={[styles.wordCard, { backgroundColor: c.surface, borderColor: c.line }]} onPress={() => {}}>
+            <Text style={[styles.wordTitle, { color: c.text }]}>{wordPop}</Text>
+            {wordLoading ? (
+              <ActivityIndicator color={c.textMuted} style={{ marginVertical: 8 }} />
+            ) : (
+              <Text style={[styles.wordTrText, { color: c.textMuted }]}>{wordTr ?? '—'}</Text>
+            )}
+            <Pressable
+              onPress={addWord}
+              disabled={!wordTr || wordAdded}
+              style={[styles.wordAdd, { backgroundColor: wordAdded ? 'transparent' : c.accent, borderColor: c.accent }]}
+            >
+              <Plus size={15} color={wordAdded ? c.accent : c.accentText} />
+              <Text style={{ color: wordAdded ? c.accent : c.accentText, fontWeight: '700', fontSize: 13 }}>
+                {wordAdded ? 'в словаре ✓' : 'в словарь'}
+              </Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -279,7 +355,7 @@ export default function ChatScreen() {
             keyExtractor={(m) => m.id}
             contentContainerStyle={{ padding: space(2), gap: space(1.5) }}
             keyboardShouldPersistTaps="handled"
-            renderItem={({ item }) => <Bubble msg={item} c={c} />}
+            renderItem={({ item }) => <Bubble msg={item} c={c} onWord={openWord} />}
           />
           <View style={styles.fabWrap} pointerEvents="box-none">
             <Pressable
@@ -302,9 +378,15 @@ export default function ChatScreen() {
           </View>
         ) : null}
 
-        {/* Ввод-остров (свайп по нему разворачивает/сворачивает чат) */}
+        {/* Граббер острова: свайп вверх — развернуть чат, вниз — свернуть (не на TextInput) */}
         <GestureDetector gesture={swipe}>
-          <View style={[styles.inputBar, { borderTopColor: c.line, backgroundColor: c.surface }]}>
+          <View style={styles.grabberZone}>
+            <View style={[styles.grabber, { backgroundColor: c.line }]} />
+          </View>
+        </GestureDetector>
+
+        {/* Ввод-остров */}
+        <View style={[styles.inputBar, { borderTopColor: c.line, backgroundColor: c.surface }]}>
             <Pressable
               onPress={onMic}
               disabled={!ready}
@@ -349,14 +431,13 @@ export default function ChatScreen() {
             >
               <Send size={18} color={c.accentText} strokeWidth={2.3} />
             </Pressable>
-          </View>
-        </GestureDetector>
+        </View>
       </KeyboardAvoidingView>
     </View>
   );
 }
 
-function Bubble({ msg, c }: { msg: UiMessage; c: typeof light }) {
+function Bubble({ msg, c, onWord }: { msg: UiMessage; c: typeof light; onWord: (w: string, sentence: string) => void }) {
   const isUser = msg.role === 'user';
   const [tr, setTr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -396,7 +477,15 @@ function Bubble({ msg, c }: { msg: UiMessage; c: typeof light }) {
         ]}
       >
         <Text style={{ color: isUser ? c.bubbleUserText : c.bubblePablitoText, fontSize: 16, lineHeight: 23 }}>
-          {msg.text}
+          {tokenizeWords(msg.text).map((tok, i) =>
+            tok.w ? (
+              <Text key={i} onPress={onPress} onLongPress={() => onWord(tok.t, msg.text)}>
+                {tok.t}
+              </Text>
+            ) : (
+              <Text key={i}>{tok.t}</Text>
+            )
+          )}
         </Text>
         {loading ? <Text style={[styles.mono, { color: c.textMuted, marginTop: 6 }]}>перевожу…</Text> : null}
         {show && tr ? (
@@ -406,7 +495,7 @@ function Bubble({ msg, c }: { msg: UiMessage; c: typeof light }) {
         ) : null}
       </View>
       {!isUser && !tr && !loading ? (
-        <Text style={[styles.tapHint, { color: c.textMuted }]}>нажми — перевод</Text>
+        <Text style={[styles.tapHint, { color: c.textMuted }]}>нажми — перевод · держи слово — в словарь</Text>
       ) : null}
     </Pressable>
   );
@@ -517,8 +606,38 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   translation: { marginTop: 8, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth },
+  wordOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: space(4),
+  },
+  wordCard: {
+    minWidth: 240,
+    maxWidth: '86%',
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: space(2.5),
+    alignItems: 'center',
+    gap: 8,
+  },
+  wordTitle: { fontSize: 22, fontWeight: '800', letterSpacing: -0.3 },
+  wordTrText: { fontSize: 16, textAlign: 'center' },
+  wordAdd: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginTop: 4,
+  },
   tapHint: { fontFamily: 'SpaceMono', fontSize: 9, letterSpacing: 0.5, marginTop: 3, opacity: 0.6 },
   typing: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingHorizontal: space(2), paddingBottom: space(1) },
+  grabberZone: { alignItems: 'center', paddingVertical: space(1) },
+  grabber: { width: 44, height: 5, borderRadius: 3, opacity: 0.55 },
   inputBar: {
     flexDirection: 'row',
     alignItems: 'center',
