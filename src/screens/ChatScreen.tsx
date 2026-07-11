@@ -40,6 +40,11 @@ import * as ImageManipulator from 'expo-image-manipulator';
 
 const MASCOT = require('../../assets/mascot.png');
 
+// §6.4: чипы-предложения «Сегодня» (тап = отправить как реплику). Русский intent → Паблито
+// отвечает по-испански (иммерсия). Разные для «Друга» и «Урока».
+const CHIPS_FRIEND = ['Как прошёл день?', 'Продолжим вчерашнее', 'Слово дня'];
+const CHIPS_LESSON = ['Тема дня: кафе', 'Повторим слова', '2 минуты произношения'];
+
 type Presence = 'online' | 'typing' | 'recent' | 'offline';
 const rand = (min: number, max: number) => min + Math.floor(Math.random() * (max - min));
 const PRESENCE_ONLINE = '#3E9B6B';
@@ -100,6 +105,9 @@ export default function ChatScreen() {
 
   // §3.1: инвертированная лента — новейшее это индекс 0 (внизу), надёжно держит низ.
   const data = useMemo(() => messages.slice().reverse(), [messages]);
+
+  // §6.4: чипы показываем сразу после приветствия, пока пользователь ничего не сказал.
+  const showChips = ready && !busy && messages.length > 0 && !messages.some((m) => m.role === 'user');
 
   useEffect(() => {
     mem.getSetting('show_cities').then((v) => setShowCities(v !== '0')).catch(() => {});
@@ -229,22 +237,23 @@ export default function ChatScreen() {
     setText('');
   };
 
-  const onMic = async () => {
-    if (recording) {
-      setRecording(false);
-      const uri = await stopRecording();
-      if (!uri) return;
-      try {
-        const said = await transcribe(uri, 'es');
-        if (said) send(said);
-      } catch {
-        /* тихо игнорируем сбой распознавания */
-      }
-    } else {
-      const ok = await requestMic();
-      if (!ok) return;
-      await startRecording();
-      setRecording(true);
+  // §6.3: голос — «удерживай и говори». Зажал → запись, отпустил → распознавание + отправка.
+  const onMicStart = async () => {
+    const ok = await requestMic();
+    if (!ok) return;
+    await startRecording();
+    setRecording(true);
+  };
+  const onMicStop = async () => {
+    if (!recording) return;
+    setRecording(false);
+    const uri = await stopRecording();
+    if (!uri) return;
+    try {
+      const said = await transcribe(uri, 'es');
+      if (said) send(said);
+    } catch {
+      /* тихо игнорируем сбой распознавания */
     }
   };
 
@@ -482,12 +491,28 @@ export default function ChatScreen() {
           </View>
         ) : null}
 
+        {/* §6.4 «Сегодня»: чипы-предложения при входе */}
+        {showChips ? (
+          <View style={styles.chipsRow}>
+            {(lessonMode === 'lesson' ? CHIPS_LESSON : CHIPS_FRIEND).map((ch) => (
+              <Pressable key={ch} onPress={() => send(ch)} style={[styles.chip, { borderColor: c.line, backgroundColor: c.surface }]}>
+                <Text style={{ color: c.text, fontSize: 13, fontWeight: '600' }}>{ch}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
         {/* Граббер: свайп вверх — развернуть чат, вниз — свернуть */}
         <GestureDetector gesture={swipe}>
           <View style={styles.grabberZone}>
             <View style={[styles.grabber, { backgroundColor: c.line }]} />
           </View>
         </GestureDetector>
+
+        {/* §6.3 подсказка про голос */}
+        {!text.trim() && !recording ? (
+          <Text style={[styles.voiceHint, { color: c.textMuted }]}>удерживай микрофон и говори — я слушаю 🎙</Text>
+        ) : null}
 
         {/* §9: ввод-остров — [📎] · [текст] · [микрофон] */}
         <View style={[styles.inputBar, { borderTopColor: c.line, backgroundColor: c.surface }]}>
@@ -516,18 +541,15 @@ export default function ChatScreen() {
             </Pressable>
           ) : (
             <Pressable
-              onPress={onMic}
+              onPressIn={onMicStart}
+              onPressOut={onMicStop}
               disabled={!ready}
               style={({ pressed }) => [
                 styles.micBig,
-                { backgroundColor: recording ? '#C0553B' : c.accent, transform: [{ scale: pressed ? 0.94 : 1 }] },
+                { backgroundColor: recording ? '#C0553B' : c.accent, transform: [{ scale: recording || pressed ? 1.06 : 1 }] },
               ]}
             >
-              {recording ? (
-                <Square size={18} color="#fff" fill="#fff" />
-              ) : (
-                <Mic size={24} color={c.accentText} />
-              )}
+              {recording ? <Square size={18} color="#fff" fill="#fff" /> : <Mic size={24} color={c.accentText} />}
             </Pressable>
           )}
         </View>
@@ -718,6 +740,9 @@ const styles = StyleSheet.create({
   },
   tapHint: { fontFamily: 'SpaceMono', fontSize: 9, letterSpacing: 0.5, marginTop: 3, marginLeft: 4, opacity: 0.55 },
   typing: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingHorizontal: space(2), paddingBottom: space(1) },
+  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space(0.75), paddingHorizontal: space(2), paddingBottom: space(1) },
+  chip: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 18, paddingVertical: 7, paddingHorizontal: 14 },
+  voiceHint: { fontSize: 11, textAlign: 'center', paddingBottom: 4, opacity: 0.75 },
   grabberZone: { alignItems: 'center', paddingVertical: space(0.75) },
   grabber: { width: 44, height: 5, borderRadius: 3, opacity: 0.5 },
   inputBar: {
