@@ -237,15 +237,25 @@ export default function ChatScreen() {
     setText('');
   };
 
-  // §6.3: голос — «удерживай и говори». Зажал → запись, отпустил → распознавание + отправка.
+  // §6.3: голос — «удерживай и говори». holdingRef защищает от гонки при быстром тапе.
+  const holdingRef = useRef(false);
   const onMicStart = async () => {
+    holdingRef.current = true;
     const ok = await requestMic();
-    if (!ok) return;
+    if (!ok || !holdingRef.current) return;
     await startRecording();
+    if (!holdingRef.current) {
+      // отпустили во время старта — сразу останавливаем, чтобы не залипло
+      await stopRecording().catch(() => {});
+      return;
+    }
     setRecording(true);
   };
   const onMicStop = async () => {
-    if (!recording) return;
+    const wasHolding = holdingRef.current;
+    holdingRef.current = false;
+    if (!recording) return; // старт ещё не завершился — onMicStart сам остановит по флагу
+    void wasHolding;
     setRecording(false);
     const uri = await stopRecording();
     if (!uri) return;

@@ -118,6 +118,12 @@ export function usePablito() {
   const pauseAtSend = useRef(0);
   const inited = useRef(false); // защита от двойного запуска init (React StrictMode)
   const sending = useRef(false); // синхронная защита от двойного send
+  const messagesRef = useRef<UiMessage[]>([]);
+  messagesRef.current = messages;
+  // §7: снимок неактивного треда (по режиму) — мгновенное переключение без перезагрузки.
+  const threadCache = useRef<
+    Partial<Record<mem.LessonMode, { sessionId: number | null; history: ChatMessage[]; turnIndex: number; messages: UiMessage[] }>>
+  >({});
 
   const rebuildSystem = useCallback(async (m: Mood) => {
     const [facts, due] = await Promise.all([mem.getFactsForPrompt(), mem.getDueVocab()]);
@@ -215,6 +221,42 @@ export function usePablito() {
     [persist]
   );
 
+  // §7: загрузка треда режима — resume недавней сессии этого режима или свежий старт с приветствием.
+  const loadThread = useCallback(
+    async (mode: mem.LessonMode, m: Mood) => {
+      const open = await mem.getOpenSessionByMode(mode);
+      const lastAct = open ? (await mem.getSessionLastActivity(open.id)) ?? open.started_at : 0;
+      const canResume = open && Date.now() - lastAct < RESUME_WINDOW_MS;
+
+      if (open && canResume) {
+        sessionId.current = open.id;
+        turnIndex.current = await mem.countMessages(open.id);
+        recapRef.current = await mem.getLastSessionSummary(open.id);
+        momentsRef.current = await mem.getMomentsPreview(2);
+        const msgs = await mem.getLastMessages(open.id, KEEP_TURNS);
+        history.current = msgs
+          .filter((x) => x.role !== 'system')
+          .map((x) => ({ role: x.role as 'user' | 'assistant', content: x.content }));
+        setMessages(history.current.map((x) => ({ id: uid(), role: x.role as 'user' | 'assistant', text: x.content })));
+        await rebuildSystem(m);
+        return;
+      }
+
+      // Свежий тред этого режима. «Осиротевшую» сессию режима закрываем с резюме.
+      if (open) await closeSessionWithSummary(open.id, moodRef.current);
+      recapRef.current = await mem.getLastSessionSummary();
+      momentsRef.current = await mem.getRelevantMoments(2);
+      sessionId.current = await mem.startSession(mode);
+      turnIndex.current = 0;
+      history.current = [];
+      setMessages([]);
+      await rebuildSystem(m);
+      history.current.push(openingUserTurn());
+      await runAssistant(undefined, true);
+    },
+    [rebuildSystem, runAssistant]
+  );
+
   // Инициализация / восстановление.
   useEffect(() => {
     if (inited.current) return; // StrictMode dev-double-mount не создаёт вторую сессию
@@ -251,46 +293,16 @@ export function usePablito() {
       }
       dayToneRef.current = tone;
 
-      const open = await mem.getOpenSession();
-      const lastAct = open ? (await mem.getSessionLastActivity(open.id)) ?? open.started_at : 0;
-      const canResume = open && Date.now() - lastAct < RESUME_WINDOW_MS;
-
-      if (open && canResume) {
-        sessionId.current = open.id;
-        turnIndex.current = await mem.countMessages(open.id);
-        recapRef.current = await mem.getLastSessionSummary(open.id);
-        momentsRef.current = await mem.getMomentsPreview(2); // без «затирания» resurfaced
-        const msgs = await mem.getLastMessages(open.id, KEEP_TURNS);
-        history.current = msgs
-          .filter((x) => x.role !== 'system')
-          .map((x) => ({ role: x.role as 'user' | 'assistant', content: x.content }));
-        setMessages(history.current.map((x) => ({ id: uid(), role: x.role as 'user' | 'assistant', text: x.content })));
-        setMood(m);
-        await mem.saveMood(m);
-        await rebuildSystem(m);
-        setReady(true);
-        return;
-      }
-
-      // Новая сессия. «Осиротевшую» закрываем с резюме (иначе теряем контекст для recap).
-      if (open) await closeSessionWithSummary(open.id, moodRef.current);
-      recapRef.current = await mem.getLastSessionSummary();
-      momentsRef.current = await mem.getRelevantMoments(2);
-      await mem.bumpTotalSessions();
-
+      // §7: «события открытия приложения» для настроения — один раз; затем грузим тред режима.
       const startEvents: MoodEvent[] = [{ type: 'SESSION_START', daysSinceLast: daysSinceLast.current }];
       if (STREAK_MILESTONES.includes(s.count)) startEvents.push({ type: 'STREAK_MILESTONE', days: s.count });
       if (daysSinceLast.current >= 21) startEvents.push({ type: 'GHOSTED_LONG' });
       m = applyEvents(m, startEvents);
       setMood(m);
       await mem.saveMood(m);
+      await mem.bumpTotalSessions();
 
-      sessionId.current = await mem.startSession(lessonRef.current);
-      turnIndex.current = 0;
-      await rebuildSystem(m);
-
-      history.current.push(openingUserTurn());
-      await runAssistant(undefined, true);
+      await loadThread(lessonRef.current, m);
       setReady(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -329,31 +341,38 @@ export function usePablito() {
     [busy, persist, rebuildSystem, runAssistant]
   );
 
+  // §7: переключение режима = показать ДРУГОЙ тред целиком (не подмешивать).
   const setLessonMode = useCallback(
     async (next: mem.LessonMode) => {
-      lessonRef.current = next;
-      setLessonModeState(next);
-      await mem.setLessonMode(next, todayKey());
-      await rebuildSystem(moodRef.current);
-
-      // P0-4: заметная реакция на смену режима — Паблито сам пишет короткую реплику.
-      // Служебный ввод идёт только в контекст модели: не показываем и не сохраняем как сообщение пользователя.
-      if (!ready || busy || sending.current) return; // не перебиваем и не мешаем стартовому приветствию
+      if (next === lessonRef.current || !ready || busy || sending.current) return;
       sending.current = true;
       try {
-        history.current.push({
-          role: 'user',
-          content:
-            next === 'lesson'
-              ? '(El alumno cambió a modo LECCIÓN. Reaccioná vos, sin que él haya escrito nada: proponé el tema de hoy y un primer mini-ejercicio corto para arrancar ya.)'
-              : '(El alumno cambió a modo CHARLA de amigos. Reaccioná vos con una sola línea relajada, invitándolo a charlar de lo que quiera.)',
-        });
-        await runAssistant(undefined, true);
+        // Снимок текущего треда в кэш, затем показываем тред целевого режима.
+        threadCache.current[lessonRef.current] = {
+          sessionId: sessionId.current,
+          history: history.current,
+          turnIndex: turnIndex.current,
+          messages: messagesRef.current,
+        };
+        lessonRef.current = next;
+        setLessonModeState(next);
+        await mem.setLessonMode(next, todayKey());
+
+        const cached = threadCache.current[next];
+        if (cached) {
+          sessionId.current = cached.sessionId;
+          history.current = cached.history;
+          turnIndex.current = cached.turnIndex;
+          setMessages(cached.messages);
+          await rebuildSystem(moodRef.current);
+        } else {
+          await loadThread(next, moodRef.current);
+        }
       } finally {
         sending.current = false;
       }
     },
-    [ready, busy, rebuildSystem, runAssistant]
+    [ready, busy, rebuildSystem, loadThread]
   );
 
   // §4: отправка фото на разбор. Картинка уходит vision-модели один раз; в историю —

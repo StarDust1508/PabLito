@@ -578,6 +578,15 @@ export async function getOpenSession(): Promise<{ id: number; started_at: number
   );
   return row ?? null;
 }
+/** §7: открытая сессия конкретного режима (для двух отдельных тредов Друг/Урок). */
+export async function getOpenSessionByMode(mode: LessonMode): Promise<{ id: number; started_at: number } | null> {
+  const d = await db();
+  const row = await d.getFirstAsync<{ id: number; started_at: number }>(
+    'SELECT id, started_at FROM sessions WHERE ended_at IS NULL AND mode = ? ORDER BY id DESC LIMIT 1',
+    [mode]
+  );
+  return row ?? null;
+}
 /** Время последней активности сессии (последнее сообщение) — для окна resume. */
 export async function getSessionLastActivity(sessionId: number): Promise<number | null> {
   const d = await db();
