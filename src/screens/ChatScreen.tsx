@@ -16,7 +16,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  useColorScheme,
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -24,7 +23,8 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeInDown, runOnJS } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { Maximize2, Menu, Mic, Minimize2, Paperclip, Plus, Search, Send, Square, X } from 'lucide-react-native';
-import { dark, light, space } from '@/theme/theme';
+import { light, space } from '@/theme/theme';
+import { useTheme } from '@/theme/ThemeProvider';
 import { usePablito, type UiMessage } from '@/hooks/usePablito';
 import CityStrip from '@/components/CityStrip';
 import PronunciationModal from '@/screens/PronunciationModal';
@@ -66,8 +66,7 @@ function tokenizeWords(text: string): { t: string; w: boolean }[] {
 }
 
 export default function ChatScreen() {
-  const scheme = useColorScheme();
-  const c = scheme === 'dark' ? dark : light;
+  const { c, scheme, mode: themeMode, setMode: setThemeMode } = useTheme();
   const { messages, moodBadge, busy, ready, send, sendPhoto, name, streak, daysToMove, lessonMode, setLessonMode } =
     usePablito();
   const [text, setText] = useState('');
@@ -365,6 +364,8 @@ export default function ChatScreen() {
         onOpenWords={() => setWordsOpen(true)}
         onOpenMemory={() => setMemOpen(true)}
         onOpenPractice={() => setPronOpen(true)}
+        themeMode={themeMode}
+        onSetTheme={setThemeMode}
       />
 
       {/* §5: поиск по переписке */}

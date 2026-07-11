@@ -2,6 +2,7 @@ import { useFonts } from 'expo-font';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import ChatScreen from '@/screens/ChatScreen';
+import { ThemeProvider } from '@/theme/ThemeProvider';
 
 export default function App() {
   const [fontsLoaded, fontError] = useFonts({
@@ -18,7 +19,9 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <ChatScreen />
+        <ThemeProvider>
+          <ChatScreen />
+        </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

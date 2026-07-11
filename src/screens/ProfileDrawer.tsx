@@ -9,6 +9,7 @@ import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, V
 import Animated, { SlideInLeft } from 'react-native-reanimated';
 import { BookOpen, Brain, ChevronRight, MapPin, Mic, Search, Trash2, Volume2, VolumeX } from 'lucide-react-native';
 import { type Palette, space } from '@/theme/theme';
+import { type ThemeMode } from '@/theme/ThemeProvider';
 import { USER_PROFILE } from '@/config';
 import { countdownLabel, milestones, type Milestone } from '@/core/progress';
 import { isSpeechMuted, setSpeechMuted } from '@/core/voice';
@@ -32,6 +33,8 @@ interface Props {
   onOpenWords: () => void;
   onOpenMemory: () => void;
   onOpenPractice: () => void;
+  themeMode: ThemeMode;
+  onSetTheme: (m: ThemeMode) => void;
 }
 
 export default function ProfileDrawer(p: Props) {
@@ -171,6 +174,20 @@ export default function ProfileDrawer(p: Props) {
 
             {/* Настройки */}
             <Text style={[styles.section, { color: c.textMuted }]}>НАСТРОЙКИ</Text>
+            <Text style={[styles.subLabel, { color: c.textMuted }]}>Тема</Text>
+            <View style={[styles.themeRow, { borderColor: c.line }]}>
+              {(['light', 'dark', 'system'] as ThemeMode[]).map((m) => (
+                <Pressable
+                  key={m}
+                  onPress={() => p.onSetTheme(m)}
+                  style={[styles.themeSeg, { backgroundColor: p.themeMode === m ? c.accent : 'transparent' }]}
+                >
+                  <Text style={{ color: p.themeMode === m ? c.accentText : c.text, fontSize: 13, fontWeight: '700' }}>
+                    {m === 'light' ? 'Светлая' : m === 'dark' ? 'Тёмная' : 'Система'}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
             <Pressable onPress={toggleMute} style={[styles.row, { borderColor: c.line }]}>
               {muted ? <VolumeX size={18} color={c.text} /> : <Volume2 size={18} color={c.text} />}
               <Text style={[styles.rowText, { color: c.text }]}>Озвучка ответов</Text>
@@ -217,6 +234,9 @@ const styles = StyleSheet.create({
     marginBottom: space(1),
   },
   rowText: { flex: 1, fontSize: 15, fontWeight: '600' },
+  subLabel: { fontSize: 12, marginBottom: 6 },
+  themeRow: { flexDirection: 'row', borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, overflow: 'hidden', marginBottom: space(1) },
+  themeSeg: { flex: 1, alignItems: 'center', paddingVertical: space(1.25) },
   state: { fontSize: 13, fontWeight: '700' },
   hint: { fontSize: 13, lineHeight: 18, marginBottom: space(1), fontStyle: 'italic' },
   working: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, padding: space(1.5), marginBottom: space(1) },
