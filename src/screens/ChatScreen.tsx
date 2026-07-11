@@ -1,7 +1,7 @@
 /**
- * Главный экран: чат с Паблито — ядро приложения.
- * Острова (шапка/ввод), раскрытие на весь экран (кнопка + свайп), инвертированная
- * лента, presence, перевод по тапу. Иконки — lucide. Эстетика malvah.
+ * Главный экран (TZ-04): разговор — дом. Минимальный верх (аватар→панель · логотип ·
+ * настроение+presence · меню), лента с пузырями (аватар слева, мягкие тени), таблетка
+ * режима над лентой, города по тумблеру. Всё остальное — в боковой панели.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -21,9 +21,9 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { FadeInDown, FadeInUp, FadeOutUp, runOnJS } from 'react-native-reanimated';
+import Animated, { FadeInDown, runOnJS } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { BookOpen, Brain, Maximize2, Mic, Minimize2, Paperclip, Plus, Search, Send, Sparkles, Square, X } from 'lucide-react-native';
+import { Maximize2, Menu, Mic, Minimize2, Paperclip, Plus, Search, Send, Square, X } from 'lucide-react-native';
 import { dark, light, space } from '@/theme/theme';
 import { usePablito, type UiMessage } from '@/hooks/usePablito';
 import CityStrip from '@/components/CityStrip';
@@ -32,16 +32,17 @@ import LearnedWordsModal from '@/screens/LearnedWordsModal';
 import MemoryModal from '@/screens/MemoryModal';
 import ProfileDrawer from '@/screens/ProfileDrawer';
 import KineticWordmark from '@/components/KineticWordmark';
-import { countdownLabel } from '@/core/progress';
 import { requestMic, startRecording, stopRecording } from '@/core/voice';
 import { transcribe, translate, translateWord } from '@/api/navy';
 import * as mem from '@/core/memory';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 
+const MASCOT = require('../../assets/mascot.png');
+
 type Presence = 'online' | 'typing' | 'recent' | 'offline';
 const rand = (min: number, max: number) => min + Math.floor(Math.random() * (max - min));
-const PRESENCE_ONLINE = '#3E9B6B'; // спокойный зелёный «в сети», в тон бумажной палитре
+const PRESENCE_ONLINE = '#3E9B6B';
 
 function presenceLabel(p: Presence): string {
   if (p === 'typing') return 'печатает…';
@@ -74,16 +75,16 @@ export default function ChatScreen() {
   const [pronOpen, setPronOpen] = useState(false);
   const [wordsOpen, setWordsOpen] = useState(false);
   const [memOpen, setMemOpen] = useState(false);
-  const [focused, setFocused] = useState(false); // при письме прячем среднюю зону
+  const [focused, setFocused] = useState(false); // при письме прячем города
   const [expanded, setExpanded] = useState(false); // раскрытие чата на весь экран
-  const [drawerOpen, setDrawerOpen] = useState(false); // §6 шторка профиля
+  const [drawerOpen, setDrawerOpen] = useState(false); // §6.2 боковая панель
   const [searchOpen, setSearchOpen] = useState(false); // §5 поиск по чату
   const [searchQ, setSearchQ] = useState('');
   const [searchResults, setSearchResults] = useState<mem.MessageHit[]>([]);
+  const [showCities, setShowCities] = useState(true); // §6.1 тумблер городов
   const listRef = useRef<FlatList<UiMessage>>(null);
-  const countdown = countdownLabel(daysToMove);
 
-  // §2: поповер перевода отдельного слова + кэш переводов слов (не дёргаем модель повторно).
+  // §2: поповер перевода отдельного слова + кэш переводов слов.
   const wordCache = useRef<Map<string, string>>(new Map());
   const [wordPop, setWordPop] = useState<string | null>(null);
   const [wordTr, setWordTr] = useState<string | null>(null);
@@ -100,6 +101,10 @@ export default function ChatScreen() {
 
   // §3.1: инвертированная лента — новейшее это индекс 0 (внизу), надёжно держит низ.
   const data = useMemo(() => messages.slice().reverse(), [messages]);
+
+  useEffect(() => {
+    mem.getSetting('show_cities').then((v) => setShowCities(v !== '0')).catch(() => {});
+  }, []);
 
   // «печатает» ведёт busy; после ответа «в сети», через 20–40 c простоя «был недавно».
   useEffect(() => {
@@ -152,9 +157,7 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const midHidden = expanded || focused; // города / режим / панель
-
-  // §3.2 механика 2: свайп по ввод-острову — влево развернуть, вправо свернуть.
+  // Свайп по грабберу — развернуть/свернуть чат.
   const swipe = useMemo(
     () =>
       Gesture.Pan().onEnd((e) => {
@@ -165,7 +168,7 @@ export default function ChatScreen() {
     []
   );
 
-  // §6: edge-swipe от левого края ленты → открыть шторку профиля.
+  // §6.2: edge-swipe от левого края ленты → открыть панель.
   const edgeSwipe = useMemo(
     () =>
       Gesture.Pan()
@@ -199,8 +202,8 @@ export default function ChatScreen() {
   const jumpToHit = (hit: mem.MessageHit) => {
     setSearchOpen(false);
     const mi = messages.findIndex((m) => m.text === hit.content);
-    if (mi < 0) return; // из другой (не загруженной) сессии — просто закрываем
-    const idx = messages.length - 1 - mi; // индекс в инвертированной data
+    if (mi < 0) return;
+    const idx = messages.length - 1 - mi;
     requestAnimationFrame(() => {
       try {
         listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
@@ -208,6 +211,16 @@ export default function ChatScreen() {
         /* не измерено — игнорируем */
       }
     });
+  };
+
+  const toggleCities = (v: boolean) => {
+    setShowCities(v);
+    mem.setSetting('show_cities', v ? '1' : '0').catch(() => {});
+  };
+
+  const toggleMode = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setLessonMode(lessonMode === 'lesson' ? 'chat' : 'lesson');
   };
 
   const onSend = () => {
@@ -269,7 +282,6 @@ export default function ChatScreen() {
     setWordTr(null);
     setWordLoading(true);
     try {
-      // §2 (улучшено): перевод слова В КОНТЕКСТЕ фразы — точнее, чем в отрыве.
       const t = await translateWord(word, sentence);
       wordCache.current.set(key, t);
       setWordTr(t);
@@ -295,37 +307,25 @@ export default function ChatScreen() {
     <View style={[styles.root, { backgroundColor: c.bg }]}>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
 
-      {/* Шапка (обычный режим) */}
+      {/* Минимальная шапка */}
       {!expanded && (
         <View style={[styles.header, { borderBottomColor: c.line }]}>
           <View style={styles.brandRow}>
             <Pressable onPress={() => setDrawerOpen(true)}>
-              <Image
-                source={require('../../assets/mascot.png')}
-                style={[styles.avatar, { borderColor: c.line }]}
-              />
+              <Image source={MASCOT} style={[styles.avatar, { borderColor: c.line }]} />
             </Pressable>
             <View>
               <KineticWordmark c={c} />
-              <Text style={[styles.mono, { color: c.textMuted }]}>ES-AR · TU AMIGO PORTEÑO</Text>
               <View style={styles.presenceRow}>
+                <Text style={{ fontSize: 12 }}>{moodBadge.emoji}</Text>
                 <View style={[styles.presenceDot, { backgroundColor: presenceColor(presence, c) }]} />
                 <Text style={[styles.presenceText, { color: c.textMuted }]}>{presenceLabel(presence)}</Text>
               </View>
             </View>
           </View>
-          <View style={{ alignItems: 'flex-end', gap: 6 }}>
-            <Pressable onPress={() => setPronOpen(true)} style={[styles.practice, { borderColor: c.line }]}>
-              <Sparkles size={13} color={c.text} />
-              <Text style={{ color: c.text, fontSize: 12, fontWeight: '600' }}>Práctica</Text>
-            </Pressable>
-            <View style={styles.moodPill}>
-              <Text style={[styles.mono, { color: c.textMuted }]}>ÁNIMO</Text>
-              <Text style={[styles.moodText, { color: c.text }]}>
-                {moodBadge.emoji} {moodBadge.label}
-              </Text>
-            </View>
-          </View>
+          <Pressable onPress={() => setDrawerOpen(true)} hitSlop={10} style={styles.menuBtn}>
+            <Menu size={24} color={c.text} />
+          </Pressable>
         </View>
       )}
 
@@ -336,7 +336,7 @@ export default function ChatScreen() {
           style={[styles.islandHeader, { backgroundColor: c.surface, borderColor: c.line }]}
         >
           <Pressable onPress={() => setDrawerOpen(true)}>
-            <Image source={require('../../assets/mascot.png')} style={[styles.islandAvatar, { borderColor: c.line }]} />
+            <Image source={MASCOT} style={[styles.islandAvatar, { borderColor: c.line }]} />
           </Pressable>
           <View style={{ flex: 1 }}>
             <Text style={[styles.islandName, { color: c.text }]}>Pablito</Text>
@@ -359,12 +359,12 @@ export default function ChatScreen() {
         name={name}
         streak={streak}
         daysToMove={daysToMove}
-        lessonMode={lessonMode}
-        setLessonMode={setLessonMode}
-        onOpenMemory={() => {
-          setDrawerOpen(false);
-          setMemOpen(true);
-        }}
+        showCities={showCities}
+        onToggleCities={toggleCities}
+        onOpenSearch={() => setSearchOpen(true)}
+        onOpenWords={() => setWordsOpen(true)}
+        onOpenMemory={() => setMemOpen(true)}
+        onOpenPractice={() => setPronOpen(true)}
       />
 
       {/* §5: поиск по переписке */}
@@ -437,51 +437,7 @@ export default function ChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={8}
       >
-        {!midHidden && (
-          <Animated.View entering={FadeInUp.duration(180)} exiting={FadeOutUp.duration(140)}>
-            <View style={[styles.controlBar, { borderBottomColor: c.line }]}>
-              <View style={styles.controlSide}>
-                <View style={[styles.pill, { borderColor: c.line }]}>
-                  <Text style={[styles.pillText, { color: c.text }]}>🔥 {streak}</Text>
-                </View>
-                {countdown ? (
-                  <View style={[styles.pill, { borderColor: c.line }]}>
-                    <Text style={[styles.pillText, { color: c.text }]}>{countdown}</Text>
-                  </View>
-                ) : null}
-              </View>
-              <View style={styles.controlSide}>
-                <Pressable onPress={() => setSearchOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
-                  <Search size={16} color={c.text} />
-                </Pressable>
-                <Pressable onPress={() => setWordsOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
-                  <BookOpen size={16} color={c.text} />
-                </Pressable>
-                <Pressable onPress={() => setMemOpen(true)} style={[styles.iconBtn, { borderColor: c.line }]}>
-                  <Brain size={16} color={c.text} />
-                </Pressable>
-              </View>
-            </View>
-            <View style={[styles.modeBar, { borderBottomColor: c.line }]}>
-              <Text style={[styles.mono, { color: c.textMuted }]}>РЕЖИМ</Text>
-              <View style={[styles.toggle, { borderColor: c.line, flex: 1 }]}>
-                <Pressable
-                  onPress={() => setLessonMode('chat')}
-                  style={[styles.tgBtn, styles.tgHalf, { backgroundColor: lessonMode === 'chat' ? c.accent : 'transparent' }]}
-                >
-                  <Text style={[styles.tgText, { color: lessonMode === 'chat' ? c.accentText : c.text }]}>💬 Друг</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setLessonMode('lesson')}
-                  style={[styles.tgBtn, styles.tgHalf, { backgroundColor: lessonMode === 'lesson' ? c.accent : 'transparent' }]}
-                >
-                  <Text style={[styles.tgText, { color: lessonMode === 'lesson' ? c.accentText : c.text }]}>📚 Урок</Text>
-                </Pressable>
-              </View>
-            </View>
-            <CityStrip c={c} />
-          </Animated.View>
-        )}
+        {showCities && !focused && !expanded ? <CityStrip c={c} /> : null}
 
         <View style={styles.flex}>
           <FlatList
@@ -489,23 +445,30 @@ export default function ChatScreen() {
             data={data}
             inverted
             keyExtractor={(m) => m.id}
-            contentContainerStyle={{ padding: space(2), gap: space(1.5) }}
+            contentContainerStyle={{ paddingHorizontal: space(2), paddingTop: space(2), paddingBottom: space(5.5), gap: space(1.5) }}
             keyboardShouldPersistTaps="handled"
             onScrollToIndexFailed={() => {}}
             renderItem={({ item }) => <Bubble msg={item} c={c} onWord={openWord} />}
           />
-          <View style={styles.fabWrap} pointerEvents="box-none">
+
+          {/* §7: таблетка режима над лентой (пока переключает режим; треды — позже) */}
+          <View style={styles.topFloat} pointerEvents="box-none">
+            <Pressable
+              onPress={toggleMode}
+              style={({ pressed }) => [styles.modePill, { borderColor: c.line, backgroundColor: c.surface, opacity: pressed ? 0.7 : 0.92 }]}
+            >
+              <Text style={[styles.modePillText, { color: c.text }]}>
+                {lessonMode === 'lesson' ? '📚 Урок' : '💬 Друг'}
+              </Text>
+            </Pressable>
             <Pressable
               onPress={() => setExpanded((e) => !e)}
-              style={({ pressed }) => [
-                styles.expandFab,
-                { borderColor: c.line, backgroundColor: c.surface, opacity: pressed ? 0.7 : 0.92 },
-              ]}
+              style={({ pressed }) => [styles.expandFab, { borderColor: c.line, backgroundColor: c.surface, opacity: pressed ? 0.7 : 0.92 }]}
             >
               {expanded ? <Minimize2 size={13} color={c.text} /> : <Maximize2 size={13} color={c.text} />}
-              <Text style={[styles.expandTxt, { color: c.text }]}>{expanded ? 'Contraer' : 'Expandir'}</Text>
             </Pressable>
           </View>
+
           <GestureDetector gesture={edgeSwipe}>
             <View style={styles.edgeZone} />
           </GestureDetector>
@@ -518,62 +481,54 @@ export default function ChatScreen() {
           </View>
         ) : null}
 
-        {/* Граббер острова: свайп вверх — развернуть чат, вниз — свернуть (не на TextInput) */}
+        {/* Граббер: свайп вверх — развернуть чат, вниз — свернуть */}
         <GestureDetector gesture={swipe}>
           <View style={styles.grabberZone}>
             <View style={[styles.grabber, { backgroundColor: c.line }]} />
           </View>
         </GestureDetector>
 
-        {/* Ввод-остров */}
+        {/* §9: ввод-остров — [📎] · [текст] · [микрофон] */}
         <View style={[styles.inputBar, { borderTopColor: c.line, backgroundColor: c.surface }]}>
+          <Pressable onPress={onPhoto} disabled={!ready} style={[styles.attach, { borderColor: c.line }]}>
+            <Paperclip size={18} color={c.text} />
+          </Pressable>
+          <TextInput
+            value={text}
+            onChangeText={setText}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            placeholder={recording ? 'Hablá… te escucho' : 'Escribí o hablá en español…'}
+            placeholderTextColor={c.textMuted}
+            style={[styles.input, { color: c.text, borderColor: c.line }]}
+            multiline
+            textAlignVertical="center"
+            onSubmitEditing={onSend}
+          />
+          {text.trim() ? (
+            <Pressable
+              onPress={onSend}
+              disabled={!ready || busy}
+              style={({ pressed }) => [styles.send, { backgroundColor: c.accent, opacity: pressed ? 0.8 : 1 }]}
+            >
+              <Send size={20} color={c.accentText} strokeWidth={2.3} />
+            </Pressable>
+          ) : (
             <Pressable
               onPress={onMic}
               disabled={!ready}
               style={({ pressed }) => [
-                styles.mic,
-                {
-                  borderColor: c.line,
-                  backgroundColor: recording ? c.accent : 'transparent',
-                  transform: [{ scale: pressed ? 0.92 : 1 }],
-                },
+                styles.micBig,
+                { backgroundColor: recording ? '#C0553B' : c.accent, transform: [{ scale: pressed ? 0.94 : 1 }] },
               ]}
             >
               {recording ? (
-                <Square size={16} color={c.accentText} fill={c.accentText} />
+                <Square size={18} color="#fff" fill="#fff" />
               ) : (
-                <Mic size={20} color={c.text} />
+                <Mic size={24} color={c.accentText} />
               )}
             </Pressable>
-            <Pressable onPress={onPhoto} disabled={!ready} style={[styles.mic, { borderColor: c.line }]}>
-              <Paperclip size={18} color={c.text} />
-            </Pressable>
-            <TextInput
-              value={text}
-              onChangeText={setText}
-              onFocus={() => setFocused(true)}
-              onBlur={() => setFocused(false)}
-              placeholder={recording ? 'Hablá… te escucho' : 'Escribí o hablá en español…'}
-              placeholderTextColor={c.textMuted}
-              style={[styles.input, { color: c.text, borderColor: c.line }]}
-              multiline
-              textAlignVertical="center"
-              onSubmitEditing={onSend}
-            />
-            <Pressable
-              onPress={onSend}
-              disabled={!ready || busy || !text.trim()}
-              style={({ pressed }) => [
-                styles.send,
-                {
-                  backgroundColor: c.accent,
-                  opacity: !text.trim() ? 0.4 : pressed ? 0.8 : 1,
-                  transform: [{ scale: pressed ? 0.92 : 1 }],
-                },
-              ]}
-            >
-              <Send size={18} color={c.accentText} strokeWidth={2.3} />
-            </Pressable>
+          )}
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -586,7 +541,6 @@ function Bubble({ msg, c, onWord }: { msg: UiMessage; c: typeof light; onWord: (
   const [loading, setLoading] = useState(false);
   const [show, setShow] = useState(false);
 
-  // Тап по реплике Паблито → перевод на русский (повторный тап скрывает).
   const onPress = async () => {
     if (isUser || !msg.text) return;
     if (tr) {
@@ -606,44 +560,45 @@ function Bubble({ msg, c, onWord }: { msg: UiMessage; c: typeof light; onWord: (
   };
 
   return (
-    <Pressable onPress={onPress} disabled={isUser} style={{ alignItems: isUser ? 'flex-end' : 'flex-start' }}>
-      <Text style={[styles.mono, { color: c.textMuted, marginBottom: 4 }]}>{isUser ? 'VOS' : 'PABLITO'}</Text>
-      <View
-        style={[
-          styles.bubble,
-          {
-            backgroundColor: isUser ? c.bubbleUser : c.bubblePablito,
-            borderColor: c.line,
-            borderTopRightRadius: isUser ? 4 : 18,
-            borderTopLeftRadius: isUser ? 18 : 4,
-          },
-        ]}
-      >
-        {msg.image ? <Image source={{ uri: msg.image }} style={styles.bubbleImg} /> : null}
-        {msg.text ? (
-          <Text style={{ color: isUser ? c.bubbleUserText : c.bubblePablitoText, fontSize: 16, lineHeight: 23 }}>
-            {tokenizeWords(msg.text).map((tok, i) =>
-              tok.w ? (
-                <Text key={i} onPress={onPress} onLongPress={() => onWord(tok.t, msg.text)}>
-                  {tok.t}
-                </Text>
-              ) : (
-                <Text key={i}>{tok.t}</Text>
-              )
-            )}
-          </Text>
+    <View style={[styles.bubbleRow, { justifyContent: isUser ? 'flex-end' : 'flex-start' }]}>
+      {!isUser ? <Image source={MASCOT} style={[styles.bubbleAvatar, { borderColor: c.line }]} /> : null}
+      <Pressable onPress={onPress} disabled={isUser} style={{ maxWidth: '82%' }}>
+        <View
+          style={[
+            styles.bubble,
+            {
+              backgroundColor: isUser ? c.bubbleUser : c.bubblePablito,
+              borderTopRightRadius: isUser ? 6 : 20,
+              borderTopLeftRadius: isUser ? 20 : 6,
+            },
+          ]}
+        >
+          {msg.image ? <Image source={{ uri: msg.image }} style={styles.bubbleImg} /> : null}
+          {msg.text ? (
+            <Text style={{ color: isUser ? c.bubbleUserText : c.bubblePablitoText, fontSize: 16, lineHeight: 23 }}>
+              {tokenizeWords(msg.text).map((tok, i) =>
+                tok.w ? (
+                  <Text key={i} onPress={onPress} onLongPress={() => onWord(tok.t, msg.text)}>
+                    {tok.t}
+                  </Text>
+                ) : (
+                  <Text key={i}>{tok.t}</Text>
+                )
+              )}
+            </Text>
+          ) : null}
+          {loading ? <Text style={[styles.mono, { color: c.textMuted, marginTop: 6 }]}>перевожу…</Text> : null}
+          {show && tr ? (
+            <View style={[styles.translation, { borderTopColor: c.line }]}>
+              <Text style={{ color: c.textMuted, fontSize: 14, lineHeight: 20 }}>{tr}</Text>
+            </View>
+          ) : null}
+        </View>
+        {!isUser && !tr && !loading ? (
+          <Text style={[styles.tapHint, { color: c.textMuted }]}>нажми — перевод · держи слово — в словарь</Text>
         ) : null}
-        {loading ? <Text style={[styles.mono, { color: c.textMuted, marginTop: 6 }]}>перевожу…</Text> : null}
-        {show && tr ? (
-          <View style={[styles.translation, { borderTopColor: c.line }]}>
-            <Text style={{ color: c.textMuted, fontSize: 14, lineHeight: 20 }}>{tr}</Text>
-          </View>
-        ) : null}
-      </View>
-      {!isUser && !tr && !loading ? (
-        <Text style={[styles.tapHint, { color: c.textMuted }]}>нажми — перевод · держи слово — в словарь</Text>
-      ) : null}
-    </Pressable>
+      </Pressable>
+    </View>
   );
 }
 
@@ -652,20 +607,20 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   header: {
     paddingTop: space(7),
-    paddingBottom: space(2),
+    paddingBottom: space(1.5),
     paddingHorizontal: space(2),
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-end',
+    alignItems: 'center',
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: space(1.25) },
   avatar: { width: 40, height: 40, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth },
-  brand: { fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
   mono: { fontFamily: 'SpaceMono', fontSize: 10, letterSpacing: 1, textTransform: 'uppercase' },
   presenceRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
   presenceDot: { width: 7, height: 7, borderRadius: 4 },
   presenceText: { fontSize: 11, fontWeight: '600' },
+  menuBtn: { padding: 4 },
   islandHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -685,65 +640,32 @@ const styles = StyleSheet.create({
   },
   islandAvatar: { width: 34, height: 34, borderRadius: 17, borderWidth: StyleSheet.hairlineWidth },
   islandName: { fontSize: 16, fontWeight: '800', letterSpacing: -0.3 },
-  practice: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 16,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  moodPill: { alignItems: 'flex-end', gap: 2 },
-  controlBar: {
+  topFloat: {
+    position: 'absolute',
+    top: space(1),
+    left: 0,
+    right: 0,
+    paddingHorizontal: space(2),
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: space(2),
-    paddingVertical: space(1),
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: space(1),
   },
-  controlSide: { flexDirection: 'row', alignItems: 'center', gap: space(0.75), flexShrink: 1 },
-  pill: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 14,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-  },
-  pillText: { fontSize: 12, fontWeight: '700' },
-  modeBar: {
+  modePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space(1.25),
-    paddingHorizontal: space(2),
-    paddingVertical: space(0.75),
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  toggle: { flexDirection: 'row', borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, overflow: 'hidden' },
-  tgBtn: { paddingVertical: 9, paddingHorizontal: 14 },
-  tgHalf: { flex: 1, alignItems: 'center' },
-  tgText: { fontSize: 14, fontWeight: '700' },
-  iconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
     borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  modePillText: { fontSize: 13, fontWeight: '700' },
+  expandFab: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 16,
+    padding: 7,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  moodText: { fontSize: 14, fontWeight: '600' },
-  fabWrap: { position: 'absolute', top: space(1), right: space(2) },
-  expandFab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 14,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-  },
-  expandTxt: { fontSize: 11, fontWeight: '700' },
   edgeZone: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 16 },
   searchWrap: { flex: 1, paddingTop: space(7) },
   searchBar: {
@@ -757,22 +679,21 @@ const styles = StyleSheet.create({
     borderRadius: 18,
   },
   searchRow: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, padding: space(1.5) },
+  bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 7 },
+  bubbleAvatar: { width: 28, height: 28, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, marginBottom: 2 },
   bubble: {
-    maxWidth: '86%',
     paddingVertical: space(1.25),
     paddingHorizontal: space(1.75),
-    borderRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.07,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
   },
   bubbleImg: { width: 220, height: 220, borderRadius: 12, marginBottom: 4 },
   translation: { marginTop: 8, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth },
-  wordOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: space(4),
-  },
+  wordOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center', padding: space(4) },
   wordCard: {
     minWidth: 240,
     maxWidth: '86%',
@@ -794,24 +715,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginTop: 4,
   },
-  tapHint: { fontFamily: 'SpaceMono', fontSize: 9, letterSpacing: 0.5, marginTop: 3, opacity: 0.6 },
+  tapHint: { fontFamily: 'SpaceMono', fontSize: 9, letterSpacing: 0.5, marginTop: 3, marginLeft: 4, opacity: 0.55 },
   typing: { flexDirection: 'row', gap: 8, alignItems: 'center', paddingHorizontal: space(2), paddingBottom: space(1) },
-  grabberZone: { alignItems: 'center', paddingVertical: space(1) },
-  grabber: { width: 44, height: 5, borderRadius: 3, opacity: 0.55 },
+  grabberZone: { alignItems: 'center', paddingVertical: space(0.75) },
+  grabber: { width: 44, height: 5, borderRadius: 3, opacity: 0.5 },
   inputBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space(1),
     paddingHorizontal: space(1.5),
-    paddingTop: space(1),
+    paddingTop: space(0.5),
     paddingBottom: space(3),
     borderTopWidth: StyleSheet.hairlineWidth,
   },
-  mic: {
+  attach: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -826,4 +747,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   send: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  micBig: { width: 54, height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center' },
 });

@@ -20,19 +20,20 @@ interface Variant {
 }
 
 // Гласные — элегантный serif/наклон; согласные — гротеск/моно, прямее. Ритм читается.
+// §10 (TZ-04): амплитуда приглушена — лёгкое «дыхание», без дёрганья.
 const VOWELS: Variant[] = [
-  { family: 'Fraunces', color: 'text', size: 30, rot: -4, ty: 2 },
-  { family: 'Fraunces', color: 'accent', size: 27, rot: 3, ty: -2 },
+  { family: 'Fraunces', color: 'text', size: 29, rot: -2, ty: 1 },
+  { family: 'Fraunces', color: 'accent', size: 28, rot: 1, ty: -1 },
   { family: 'SpaceGrotesk', color: 'text', size: 29, rot: 0, ty: 0 },
-  { family: 'SpaceMono', color: 'textMuted', size: 26, rot: 5, ty: 1 },
-  { family: 'Fraunces', color: 'text', size: 31, rot: -2, ty: -3 },
+  { family: 'SpaceMono', color: 'textMuted', size: 27, rot: 2, ty: 1 },
+  { family: 'Fraunces', color: 'text', size: 30, rot: -1, ty: -1 },
 ];
 const CONS: Variant[] = [
-  { family: 'SpaceGrotesk', color: 'text', size: 30, rot: 0, ty: 0 },
-  { family: 'SpaceMono-Bold', color: 'text', size: 28, rot: 2, ty: -1 },
-  { family: 'SpaceGrotesk', color: 'accent', size: 29, rot: -3, ty: 2 },
-  { family: 'Fraunces', color: 'text', size: 30, rot: 0, ty: -2 },
-  { family: 'SpaceMono', color: 'textMuted', size: 27, rot: 3, ty: 1 },
+  { family: 'SpaceGrotesk', color: 'text', size: 29, rot: 0, ty: 0 },
+  { family: 'SpaceMono-Bold', color: 'text', size: 28, rot: 1, ty: -1 },
+  { family: 'SpaceGrotesk', color: 'accent', size: 29, rot: -1, ty: 1 },
+  { family: 'Fraunces', color: 'text', size: 29, rot: 0, ty: -1 },
+  { family: 'SpaceMono', color: 'textMuted', size: 28, rot: 1, ty: 1 },
 ];
 const VOWEL_SET = new Set(['a', 'e', 'i', 'o', 'u']);
 
@@ -59,7 +60,7 @@ function Letter({
   const rot = useSharedValue(v.rot);
   const ty = useSharedValue(v.ty);
   useEffect(() => {
-    const d = animate ? 480 : 0;
+    const d = animate ? 600 : 0;
     rot.value = withTiming(v.rot, { duration: d });
     ty.value = withTiming(v.ty, { duration: d });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -87,7 +88,7 @@ export default function KineticWordmark({ c, text = 'PabLito' }: { c: Palette; t
 
   useEffect(() => {
     if (frozen || reduce) return;
-    const id = setInterval(() => setTick((t) => t + 1), 750);
+    const id = setInterval(() => setTick((t) => t + 1), 900);
     return () => clearInterval(id);
   }, [frozen, reduce]);
 
